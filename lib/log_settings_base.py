@@ -3,8 +3,8 @@ import logging.handlers
 
 from django.conf import settings
 
+from .metlog_shim import MetlogTastypieHandler
 from raven.handlers.logging import SentryHandler
-
 import commonware.log
 import dictconfig
 
@@ -114,5 +114,10 @@ def log_configure():
 
     dictconfig.dictConfig(cfg)
 
+    # logging.getLogger() accesses a singleton, this just binds
+    # in the SentryHandler to error level messages
     tastypie = logging.getLogger('django.request.tastypie')
-    tastypie.addHandler(SentryHandler())
+    if settings.USE_METLOG_FOR_CEF:
+        tastypie.addHandler(MetlogTastypieHandler(settings.METLOG))
+    else:
+        tastypie.addHandler(SentryHandler())

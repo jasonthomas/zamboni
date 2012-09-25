@@ -4,10 +4,44 @@
 /*             TYPOGRAPHY           */
 /************************************/
 
-body {
-    font-family: @sans-stack;
+@font-face {
+    font-family: 'Open Sans';
+    src: url('../mkt/fonts/OpenSans-Light-webfont.eot');
+    src: url('../mkt/fonts/OpenSans-Light-webfont.eot?#iefix') format('embedded-opentype'),
+         url('../mkt/fonts/OpenSans-Light-webfont.woff') format('woff'),
+         url('../mkt/fonts/OpenSans-Light-webfont.ttf') format('truetype'),
+         url('../mkt/fonts/OpenSans-Light-webfont.svg#OpenSansLight') format('svg');
+    font-weight: 300;
     font-style: normal;
+}
+
+@font-face {
+    font-family: 'Open Sans';
+    src: url('../mkt/fonts/OpenSans-Regular-webfont.eot');
+    src: url('../mkt/fonts/OpenSans-Regular-webfont.eot?#iefix') format('embedded-opentype'),
+         url('../mkt/fonts/OpenSans-Regular-webfont.woff') format('woff'),
+         url('../mkt/fonts/OpenSans-Regular-webfont.ttf') format('truetype'),
+         url('../mkt/fonts/OpenSans-Regular-webfont.svg#OpenSansRegular') format('svg');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Open Sans';
+    src: url('../mkt/fonts/OpenSans-Semibold-webfont.eot');
+    src: url('../mkt/fonts/OpenSans-Semibold-webfont.eot?#iefix') format('embedded-opentype'),
+         url('../mkt/fonts/OpenSans-Semibold-webfont.woff') format('woff'),
+         url('../mkt/fonts/OpenSans-Semibold-webfont.ttf') format('truetype'),
+         url('../mkt/fonts/OpenSans-Semibold-webfont.svg#OpenSansSemibold') format('svg');
+    font-weight: 600;
+    font-style: normal;
+}
+
+body {
+    color: @dark-gray;
+    font-family: @open-stack;
     font-size: 13px;
+    font-style: normal;
 }
 
 section + h1 {
@@ -16,23 +50,19 @@ section + h1 {
 
 #page {
     h1 {
-        font: normal 32px/40px @open-stack;
-        color: @orange;
+        font: 300 32px/40px @open-stack;
         margin-bottom: 15px;
     }
     h2 {
-        font: normal 20px @open-stack;
-        color: @dark-gray;
+        font: 300 20px @open-stack;
         margin-bottom: 10px;
     }
     h3 {
-        font: normal 17px @open-stack;
-        color: darken(@dark-gray, 10%);
+        font: 300 17px @open-stack;
         margin-bottom: 10px;
     }
     h4 {
         font: bold 14px @open-stack;
-        color: darken(@medium-gray, 5%);
         margin-bottom: 5px;
     }
     p, ul, ol {
@@ -40,6 +70,14 @@ section + h1 {
             margin-top: 25px;
         }
     }
+}
+
+h2, h3, h4, h5 {
+    color: #484848;
+}
+
+h1 {
+    color: @orange;
 }
 
 hgroup {
@@ -57,7 +95,6 @@ h4 {
 
 blockquote {
     border-left: 1px solid @light-gray;
-    font-family: @sans-stack;
     margin: 2em 1em;
     padding-left: 1em;
 }
@@ -86,6 +123,9 @@ pre {
     }
     p {
         margin-top: 1em;
+        &.call-to-action {
+            font-weight: bold;
+        }
     }
     > p:first-child {
         margin: 0;
@@ -106,7 +146,7 @@ pre {
 }
 
 .defaultlink {
-    font: normal 12px @sans-stack;
+    font: normal 12px @open-stack;
     text-transform: none;
     margin-left: .5em;
 }
@@ -149,7 +189,6 @@ pre {
 
 .secondary {
     h2 {
-        font-family: @sans-stack;
         font-style: normal;
         font-weight: bold;
         text-transform: uppercase;
@@ -159,7 +198,6 @@ pre {
         }
     }
     h3 {
-        font-family: @sans-stack;
         color: @dark-gray;
     }
 }

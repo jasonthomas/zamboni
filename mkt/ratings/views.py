@@ -1,4 +1,5 @@
 from django import http
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect
 
 import commonware.log
@@ -89,7 +90,7 @@ def reply(request, addon, review_id):
     is_admin = acl.action_allowed(request, 'Addons', 'Edit')
     is_author = acl.check_addon_ownership(request, addon, dev=True)
     if not (is_admin or is_author):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     review = get_object_or_404(Review.objects, pk=review_id, addon=addon)
     form = ReviewReplyForm(request.POST or None)
@@ -121,7 +122,7 @@ def reply(request, addon, review_id):
 def add(request, addon):
     if addon.has_author(request.user):
         # Don't let app owners review their own apps.
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     # Get user agent of user submitting review. If there is an install with
     # logged user agent that matches the current user agent, hook up that
@@ -135,6 +136,7 @@ def add(request, addon):
                                 .order_by('-created'))
     install_w_user_agent = (install.filter(client_data__user_agent=user_agent)
                                    .order_by('-created'))
+    has_review = False
     try:
         if install_w_user_agent:
             client_data = install_w_user_agent[0].client_data
@@ -223,6 +225,7 @@ def add(request, addon):
         # the form with their existing review and rating.
         form = ReviewForm({'rating': existing_review.rating or 1,
                            'body': existing_review.body})
+        has_review = True
     else:
         # If the user isn't posting back and doesn't have an existing review,
         # just show a blank version of the form.
@@ -245,4 +248,5 @@ def add(request, addon):
     return jingo.render(request, 'ratings/add.html',
                         {'product': addon, 'form': form,
                          'support_url': support_url,
+                         'has_review': has_review,
                          'support_email': support_email})

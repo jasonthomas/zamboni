@@ -4,10 +4,11 @@ import os
 import subprocess
 
 from django.conf import settings
-from django.http import HttpResponse, HttpResponseForbidden
+from django.core.exceptions import PermissionDenied
+from django.http import HttpResponse
 from django.template import RequestContext
 from django.views.decorators.cache import cache_page
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, requires_csrf_token
 
 from django_statsd.clients import statsd
 from django_statsd.views import record as django_statsd_record
@@ -19,7 +20,24 @@ from session_csrf import anonymous_csrf, anonymous_csrf_exempt
 from amo.context_processors import get_collect_timings
 from amo.decorators import post_required, no_login_required
 from amo.helpers import media
+from amo.urlresolvers import reverse
 import api.views
+
+
+log = logging.getLogger('z.mkt.site')
+
+
+# This can be called when CsrfViewMiddleware.process_view has not run,
+# therefore needs @requires_csrf_token in case the template needs
+# {% csrf_token %}.
+@requires_csrf_token
+def handler403(request):
+    # NOTE: The mkt.api uses Tastypie which has its own mechanism for
+    # triggering 403s. If we ever end up calling PermissionDenied there, we'll
+    # need something here similar to the 404s and 500s.
+    #
+    # TODO: Bug 793241 for different 403 templates at different URL paths.
+    return jingo.render(request, 'site/403.html', status=403)
 
 
 def handler404(request):
@@ -30,11 +48,9 @@ def handler404(request):
         return jingo.render(request, 'site/404.html', status=404)
 
 
-log = logging.getLogger('z.mkt.site')
-
-
 def handler500(request):
     if request.path_info.startswith('/api/'):
+        # Pass over to API handler500 view if API was targeted.
         return api.views.handler500(request)
     else:
         return jingo.render(request, 'site/500.html', status=500)
@@ -63,9 +79,11 @@ def manifest(request):
         },
         # TODO: when we have specific locales, add them in here.
         'locales': {},
-        'default_locale': 'en-US'
+        'default_locale': 'en-US',
+        'appcache_path': reverse('django_appcache.manifest')
     }
-    return HttpResponse(json.dumps(data))
+    return HttpResponse(json.dumps(data),
+                        mimetype='application/x-web-app-manifest+json')
 
 
 def robots(request):
@@ -83,7 +101,7 @@ def csrf(request):
         data = json.dumps({'csrf': RequestContext(request)['csrf_token']})
         return HttpResponse(data, content_type='application/json')
 
-    return HttpResponseForbidden()
+    raise PermissionDenied
 
 
 @csrf_exempt
@@ -93,7 +111,7 @@ def record(request):
     # we can just turn the percentage down to zero.
     if get_collect_timings():
         return django_statsd_record(request)
-    return HttpResponseForbidden()
+    raise PermissionDenied
 
 
 # Cache this for an hour so that newly deployed changes are available within
@@ -122,6 +140,9 @@ def minify_js(js):
         log.info('minifying JS with uglify')
         return _minify_js_with_uglify(js)
     else:
+        # The YUI fallback here is important
+        # because YUI compressor is bundled with jingo
+        # minify and therefore doesn't require any deps.
         log.info('minifying JS with YUI')
         return _minify_js_with_yui(js)
 
@@ -137,7 +158,7 @@ def _minify_js_with_uglify(js):
 
 def _minify_js_with_yui(js):
     jar = os.path.join(os.path.dirname(jingo_minify.__file__), 'bin',
-                       'yuicompressor-2.4.4.jar')
+                       'yuicompressor-2.4.7.jar')
     if not os.path.exists(jar):
         raise ValueError('Could not find YUI compressor; tried %r' % jar)
     sp = _open_pipe([settings.JAVA_BIN, '-jar', jar, '--type', 'js',

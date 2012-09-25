@@ -12,6 +12,7 @@ from nose.tools import eq_
 from pyquery import PyQuery as pq
 import waffle
 
+from abuse.models import AbuseReport
 from access.models import Group, GroupUser
 import amo
 import amo.tests
@@ -490,15 +491,14 @@ class TestProfileLinks(amo.tests.TestCase):
     def log_in(self):
         assert self.client.login(username=self.user.email, password='password')
 
-    def test_id_or_username(self):
-        args = [self.user.id, self.user.username]
-        for arg in args:
-            r = self.client.get(reverse('users.profile', args=[arg]))
-            eq_(r.status_code, 200)
+    def test_username(self):
+        r = self.client.get(reverse('users.profile',
+                            args=[self.user.username]))
+        eq_(r.status_code, 200)
 
-    def get_profile_links(self, id=None, username=None):
+    def get_profile_links(self, username):
         """Grab profile, return edit links."""
-        url = reverse('users.profile', args=[id or username])
+        url = reverse('users.profile', args=[username])
         r = self.client.get(url)
         eq_(r.status_code, 200)
         return pq(r.content)('#profile-actions a')
@@ -506,7 +506,7 @@ class TestProfileLinks(amo.tests.TestCase):
     def test_viewing_my_profile(self):
         # Me as (non-admin) viewing my own profile.
         self.log_in()
-        links = self.get_profile_links(self.user.id)
+        links = self.get_profile_links(self.user.username)
         eq_(links.length, 1)
         eq_(links.eq(0).attr('href'), reverse('account.settings'))
 
@@ -514,18 +514,18 @@ class TestProfileLinks(amo.tests.TestCase):
         # Ensure no edit buttons are shown.
         assert self.client.login(username='regular@mozilla.com',
                                  password='password')
-        links = self.get_profile_links(self.user.id)
+        links = self.get_profile_links(self.user.username)
         eq_(links.length, 0, 'No edit buttons should be shown.')
 
     def test_viewing_my_profile_as_anonymous(self):
         # Ensure no edit buttons are shown.
-        links = self.get_profile_links(self.user.id)
+        links = self.get_profile_links(self.user.username)
         eq_(links.length, 0, 'No edit buttons should be shown.')
 
     def test_viewing_other_profile(self):
         self.log_in()
         # Me as (non-admin) viewing someone else's my own profile.
-        eq_(self.get_profile_links(id=999).length, 0)
+        eq_(self.get_profile_links('regularuser').length, 0)
 
     def test_viewing_my_profile_as_admin(self):
         self.log_in()
@@ -533,7 +533,7 @@ class TestProfileLinks(amo.tests.TestCase):
         GroupUser.objects.create(
             group=Group.objects.create(rules='Users:Edit'), user=self.user)
         assert self.client.login(username=self.user.email, password='password')
-        links = self.get_profile_links(self.user.id)
+        links = self.get_profile_links(self.user.username)
         eq_(links.length, 1)
         eq_(links.eq(0).attr('href'), reverse('account.settings'))
 
@@ -543,7 +543,7 @@ class TestProfileLinks(amo.tests.TestCase):
         GroupUser.objects.create(
             group=Group.objects.create(rules='Users:Edit'), user=self.user)
         assert self.client.login(username=self.user.email, password='password')
-        links = self.get_profile_links(999)
+        links = self.get_profile_links('regularuser')
         eq_(links.length, 1)
         eq_(links.eq(0).attr('href'), reverse('users.admin_edit', args=[999]))
 
@@ -829,3 +829,34 @@ class TestPurchases(PurchaseBase):
             "Expected '.item' to have 'reversed' class")
         assert not item.find('a.request-support'), (
             "Unexpected 'Request Support' link")
+
+
+class TestAbuse(amo.tests.TestCase):
+    fixtures = ['base/users']
+
+    def setUp(self):
+        self.user = UserProfile.objects.get(email='regular@mozilla.com')
+        self.url = reverse('users.abuse', args=[self.user.username])
+
+    def test_add(self):
+        self.client.login(username='editor@mozilla.com', password='password')
+        res = self.client.post(self.url, data={'text':'test'})
+        eq_(res.status_code, 302)
+        eq_(AbuseReport.objects.filter(user=self.user).count(), 1)
+
+    @mock.patch.object(settings, 'RECAPTCHA_PRIVATE_KEY', 'something')
+    def test_no_recaptcha(self):
+        res = self.client.post(self.url, data={'text':'test'})
+        eq_(res.status_code, 200)
+        self.assertFormError(res, 'abuse_form', 'recaptcha',
+                             'This field is required.')
+
+    @mock.patch.object(settings, 'RECAPTCHA_PRIVATE_KEY', 'something')
+    @mock.patch('captcha.fields.ReCaptchaField.clean')
+    def test_recaptcha(self, clean):
+        clean.return_value = ''
+        res = self.client.post(self.url, data={'text':'test', 'recaptcha': '',
+                                               'recaptcha_shown': ''})
+        self.assert3xx(res, reverse('users.profile',
+                       args=[self.user.username]))
+        eq_(AbuseReport.objects.filter(user=self.user).count(), 1)

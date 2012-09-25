@@ -11,8 +11,8 @@ from abuse.models import AbuseReport
 from amo.tasks import find_abuse_escalations, find_refund_escalations
 from amo.tests import app_factory
 from devhub.models import AppLog
+from editors.models import EscalationQueue
 from market.models import AddonPurchase, Refund
-from mkt.reviewers.models import EscalationQueue
 from stats.models import Contribution
 from users.models import UserProfile
 
@@ -130,7 +130,7 @@ class TestRefundsEscalationTask(amo.tests.TestCase):
             # Needed because these tests can run in the same second and the
             # refund detection task depends on timestamp logic for when to
             # escalate.
-            applog = AppLog.objects.all().order_by('-created')[0]
+            applog = AppLog.objects.all().order_by('-created', '-id')[0]
             applog.update(created=created)
 
     def test_multiple_refunds_same_user(self):

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models, transaction
 from django.dispatch import receiver
 from django.db.models import Q, Max, signals as dbsignals
@@ -279,14 +280,17 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
     _backup_version = models.ForeignKey(Version, related_name='___backup',
             db_column='backup_version', null=True, on_delete=models.SET_NULL)
     _latest_version = None
+    make_public = models.DateTimeField(null=True)
+    mozilla_contact = models.EmailField()
+
+    # Whether the app is packaged or not (aka hosted).
+    is_packaged = models.BooleanField(default=False, db_index=True)
 
     # This gets overwritten in the transformer.
     share_counts = collections.defaultdict(int)
 
     objects = AddonManager()
     with_deleted = AddonManager(include_deleted=True)
-    make_public = models.DateTimeField(null=True)
-    mozilla_contact = models.EmailField()
 
     class Meta:
         db_table = 'addons'
@@ -412,7 +416,7 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
         return True
 
     @classmethod
-    def from_upload(cls, upload, platforms):
+    def from_upload(cls, upload, platforms, is_packaged=False):
         from files.utils import parse_addon
         data = parse_addon(upload)
         fields = cls._meta.get_all_field_names()
@@ -425,6 +429,7 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
         if addon.is_webapp():
             addon.manifest_url = upload.name
             addon.app_domain = addon.domain_from_url(addon.manifest_url)
+            addon.is_packaged = is_packaged
         addon.save()
         Version.from_upload(upload, addon, platforms)
         amo.log(amo.LOG.CREATE_ADDON, addon)
@@ -483,6 +488,11 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
     @property
     def reviews_url(self):
         return shared_url('reviews.list', self)
+
+    def get_ratings_url(self, action='list', args=None, add_prefix=True):
+        return reverse('ratings.themes.%s' % action,
+                       args=[self.slug] + (args or []),
+                       add_prefix=add_prefix)
 
     def type_url(self):
         """The url for this add-on's AddonType."""
@@ -726,8 +736,11 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
         "Returns the current_version field or updates it if needed."
         if self.type == amo.ADDON_PERSONA:
             return
-        if not self._current_version:
-            self.update_version()
+        try:
+            if not self._current_version:
+                self.update_version()
+        except ObjectDoesNotExist:
+            return
         return self._current_version
 
     @amo.cached_property
@@ -800,8 +813,7 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
 
     def update_status(self, using=None):
         if (self.status in [amo.STATUS_NULL, amo.STATUS_DELETED]
-            or self.is_disabled
-            or self.is_webapp() or self.is_persona()):
+            or self.is_disabled or self.is_persona()):
             return
 
         def logit(reason, old=self.status):
@@ -1028,6 +1040,9 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
     def is_incomplete(self):
         return self.status == amo.STATUS_NULL
 
+    def is_pending(self):
+        return self.status == amo.STATUS_PENDING
+
     def can_become_premium(self):
         """
         Not all addons can become premium and those that can only at
@@ -1170,8 +1185,15 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
 
         personas = (Addon.uncached.filter(type=amo.ADDON_PERSONA)
                     .extra(select={'last_updated': 'created'}))
+        webapps = (
+            Addon.uncached.filter(type=amo.ADDON_WEBAPP,
+                                  status=amo.STATUS_PUBLIC,
+                                  versions__files__status=amo.STATUS_PUBLIC)
+                          .values('id')
+                          .annotate(last_updated=Max('versions__created')))
+
         return dict(public=public, exp=exp, listed=listed, personas=personas,
-                    lite=lite)
+                    lite=lite, webapps=webapps)
 
     @amo.cached_property(writable=True)
     def all_categories(self):
@@ -1357,6 +1379,17 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
         if not f:
             return False
         return f.uses_flash
+
+    def in_escalation_queue(self):
+        return self.escalationqueue_set.exists()
+
+    def in_rereview_queue(self):
+        # Rereview is part of marketplace and not AMO, so setting for False
+        # to avoid having to catch NotImplemented errors.
+        return False
+
+    def sign_if_packaged(self, version_pk, reviewer=False):
+        raise NotImplementedError('Not available for add-ons.')
 
 
 class AddonDeviceType(amo.models.ModelBase):
@@ -1887,7 +1920,6 @@ def freezer(sender, instance, **kw):
 class AddonUpsell(amo.models.ModelBase):
     free = models.ForeignKey(Addon, related_name='_upsell_from')
     premium = models.ForeignKey(Addon, related_name='_upsell_to')
-    text = PurifiedField()
 
     class Meta:
         db_table = 'addon_upsell'

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from cStringIO import StringIO
 from datetime import datetime
 from decimal import Decimal
 import json
@@ -103,7 +102,6 @@ class TestHomepageFeatures(amo.tests.TestCase):
                 'base/collections',
                 'base/global-stats',
                 'base/featured',
-                'base/collections',
                 'addons/featured',
                 'bandwagon/featured_collections']
 
@@ -310,9 +308,9 @@ class TestContributeEmbedded(amo.tests.TestCase):
         res = self.contribute()
         assert not json.loads(res.content)['paykey']
 
-    @patch('urllib2.OpenerDirector.open')
-    def test_paypal_other_error_json(self, opener, **kwargs):
-        opener.return_value = StringIO(other_error)
+    @patch('paypal.requests.post')
+    def test_paypal_other_error_json(self, post, **kwargs):
+        post.return_value.text = other_error
         res = self.contribute()
         assert not json.loads(res.content)['paykey']
 
@@ -340,7 +338,7 @@ class TestContributeEmbedded(amo.tests.TestCase):
 
 
 class TestDeveloperPages(amo.tests.TestCase):
-    fixtures = ['base/addon_3615', 'base/addon_592',
+    fixtures = ['base/addon_3615', 'base/addon_592', 'base/apps',
                 'base/users', 'addons/eula+contrib-addon',
                 'addons/addon_228106_info+dev+bio.json',
                 'addons/addon_228107_multiple-devs.json']
@@ -1257,7 +1255,7 @@ class TestEulaPolicyRedirects(amo.tests.TestCase):
 
 
 class TestEula(amo.tests.TestCase):
-    fixtures = ['addons/eula+contrib-addon']
+    fixtures = ['base/apps', 'addons/eula+contrib-addon']
 
     def setUp(self):
         self.addon = Addon.objects.get(id=11730)
@@ -1331,7 +1329,7 @@ class TestEula(amo.tests.TestCase):
 
 
 class TestPrivacyPolicy(amo.tests.TestCase):
-    fixtures = ['addons/eula+contrib-addon']
+    fixtures = ['base/apps', 'addons/eula+contrib-addon']
 
     def setUp(self):
         self.addon = Addon.objects.get(id=11730)
@@ -1420,8 +1418,9 @@ class TestReportAbuse(amo.tests.TestCase):
 
 
 class TestMobile(amo.tests.MobileTest, amo.tests.TestCase):
-    fixtures = ['addons/featured', 'base/apps', 'base/addon_3615',
-                'base/featured', 'bandwagon/featured_collections']
+    fixtures = ['addons/featured', 'base/apps', 'base/users',
+                'base/addon_3615', 'base/featured',
+                'bandwagon/featured_collections']
 
 
 class TestMobileHome(TestMobile):

@@ -11,7 +11,8 @@ from PIL import Image
 
 import amo
 from amo.decorators import set_modified_on, write
-from amo.utils import attach_trans_dict, cache_ns_key, sorted_groupby
+from amo.utils import (attach_trans_dict, cache_ns_key, sorted_groupby,
+                       ImageCheck)
 from market.models import AddonPremium
 from tags.models import Tag
 from versions.models import Version
@@ -36,6 +37,8 @@ def update_last_updated(addon_id):
     addon = Addon.objects.get(pk=addon_id)
     if addon.is_persona():
         q = 'personas'
+    elif addon.is_webapp():
+        q = 'webapps'
     elif addon.status == amo.STATUS_PUBLIC:
         q = 'public'
     elif addon.status == amo.STATUS_LISTED:
@@ -177,7 +180,7 @@ def create_persona_preview_image(src, dst, img_basename, **kw):
         with storage.open(src) as fp:
             i = Image.open(fp)
             # Crop image from the right.
-            i = i.crop((orig_w - (new_h * 2), 0, orig_w, orig_h))
+            i = i.crop((orig_w - (new_w * 2), 0, orig_w, orig_h))
             i = i.resize(preview, Image.ANTIALIAS)
             i.load()
             with storage.open(os.path.join(dst, img_basename), 'wb') as fp:
@@ -192,6 +195,11 @@ def create_persona_preview_image(src, dst, img_basename, **kw):
 def save_persona_image(src, dst, img_basename, **kw):
     """Creates a JPG of a Persona header/footer image."""
     log.info('[1@None] Saving persona image: %s' % dst)
+    img = ImageCheck(storage.open(src))
+    if not img.is_image():
+        log.error('Not an image: %s' % src, exc_info=True)
+        return
+
     try:
         with storage.open(src) as fp:
             i = Image.open(fp)

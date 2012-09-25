@@ -11,34 +11,34 @@ from django.utils.http import urlencode
 from django.core.files.storage import default_storage as storage
 
 import jingo
-from jingo.helpers import datetime as datetime_filter
 import mock
+import waffle
+from jingo.helpers import datetime as datetime_filter
 from nose.plugins.attrib import attr
-from nose.tools import eq_, assert_not_equal, assert_raises
+from nose.tools import assert_not_equal, assert_raises, eq_
 from PIL import Image
 from pyquery import PyQuery as pq
 from tower import strip_whitespace
-import waffle
 # Unused, but needed so that we can patch jingo.
 from waffle import helpers
 
 import amo
 import amo.tests
+import files
 import paypal
-from amo.helpers import (absolutify, babel_datetime, url as url_reverse,
-                         timesince)
-from amo.tests import (formset, initial, close_to_now, addon_factory,
-                       assert_no_validation_errors)
-from amo.tests.test_helpers import get_image_path
-from amo.urlresolvers import reverse
 from addons import cron
 from addons.models import (Addon, AddonCategory, AddonUpsell, AddonUser,
                            Category, Charity)
+from amo.helpers import (absolutify, babel_datetime, url as url_reverse,
+                         timesince)
+from amo.tests import (addon_factory, assert_no_validation_errors,
+                       close_to_now, formset, initial)
+from amo.tests.test_helpers import get_image_path
+from amo.urlresolvers import reverse
 from applications.models import Application, AppVersion
 from devhub.forms import ContribForm
 from devhub.models import ActivityLog, BlogPost, SubmitStep
 from devhub import tasks
-import files
 from files.models import File, FileUpload, Platform
 from files.tests.test_models import UploadTest as BaseUploadTest
 from market.models import AddonPremium, Price, Refund
@@ -78,14 +78,6 @@ class HubTest(amo.tests.TestCase):
             AddonUser.objects.create(user=self.user_profile, addon=new_addon)
             ids.append(new_addon.id)
         return ids
-
-
-class TestHome(HubTest):
-
-    def test_addons(self):
-        r = self.client.get(self.url)
-        eq_(r.status_code, 200)
-        self.assertTemplateUsed(r, 'devhub/index.html')
 
 
 class TestNav(HubTest):
@@ -942,64 +934,6 @@ class TestMarketplace(MarketplaceMixin, amo.tests.TestCase):
         eq_(self.addon.paypal_id, 'b@b.com')
         eq_(self.addon.addonpremium.price, self.price_two)
 
-    def test_set_upsell(self):
-        self.setup_premium()
-        res = self.client.post(self.url, data=self.get_data())
-        eq_(res.status_code, 302)
-        eq_(len(self.addon._upsell_to.all()), 1)
-
-    def test_set_upsell_required(self):
-        self.setup_premium()
-        data = self.get_data()
-        data['text'] = ''
-        res = self.client.post(self.url, data=data)
-        eq_(res.status_code, 200)
-
-    def test_set_upsell_not_mine(self):
-        self.setup_premium()
-        self.other_addon.authors.clear()
-        res = self.client.post(self.url, data=self.get_data())
-        eq_(res.status_code, 200)
-
-    def test_remove_upsell(self):
-        self.setup_premium()
-        upsell = AddonUpsell.objects.create(free=self.other_addon,
-                                            premium=self.addon)
-        eq_(self.addon._upsell_to.all()[0], upsell)
-        data = self.get_data().copy()
-        data['do_upsell'] = 0
-        self.client.post(self.url, data=data)
-        eq_(len(self.addon._upsell_to.all()), 0)
-
-    def test_change_upsell(self):
-        self.setup_premium()
-        AddonUpsell.objects.create(free=self.other_addon,
-                                   premium=self.addon, text='foo')
-        eq_(self.addon._upsell_to.all()[0].text, 'foo')
-        data = self.get_data().copy()
-        data['text'] = 'bar'
-        self.client.post(self.url, data=data)
-        eq_(self.addon._upsell_to.all()[0].text, 'bar')
-
-    def test_replace_upsell(self):
-        self.setup_premium()
-        # Make this add-on an upsell of some free add-on.
-        AddonUpsell.objects.create(free=self.other_addon,
-                                   premium=self.addon, text='foo')
-        # And this will become our new upsell, replacing the one above.
-        new = Addon.objects.create(type=amo.ADDON_EXTENSION,
-                                   premium_type=amo.ADDON_FREE)
-        AddonUser.objects.create(addon=new, user=self.addon.authors.all()[0])
-
-        eq_(self.addon._upsell_to.all()[0].text, 'foo')
-        data = self.get_data().copy()
-        data.update(free=new.id, text='bar')
-        self.client.post(self.url, data=data)
-        upsell = self.addon._upsell_to.all()
-        eq_(len(upsell), 1)
-        eq_(upsell[0].free, new)
-        eq_(upsell[0].text, 'bar')
-
     def test_no_free(self):
         self.setup_premium()
         self.other_addon.authors.clear()
@@ -1335,7 +1269,8 @@ class TestRefunds(amo.tests.TestCase):
             for x in xrange(status + 1):
                 c = Contribution.objects.create(addon=self.addon,
                     user=self.user, type=amo.CONTRIB_PURCHASE)
-                r = Refund.objects.create(contribution=c, status=status)
+                r = Refund.objects.create(contribution=c, status=status,
+                                          requested=datetime.now())
                 self.expected.setdefault(status, []).append(r)
 
     def test_anonymous(self):
@@ -1373,6 +1308,7 @@ class TestRefunds(amo.tests.TestCase):
         for key, status in self.queues.iteritems():
             eq_(list(r.context[key]), [])
 
+    @mock.patch.object(settings, 'TASK_USER_ID', 999)
     def test_queues(self):
         self.generate_refunds()
         r = self.client.get(self.url)
@@ -1387,6 +1323,7 @@ class TestRefunds(amo.tests.TestCase):
         for key in self.queues.keys():
             eq_(doc('.no-results#queue-%s' % key).length, 1)
 
+    @mock.patch.object(settings, 'TASK_USER_ID', 999)
     def test_tables(self):
         self.generate_refunds()
         r = self.client.get(self.url)
@@ -1397,6 +1334,7 @@ class TestRefunds(amo.tests.TestCase):
             table = doc('#queue-%s' % key)
             eq_(table.length, 1)
 
+    @mock.patch.object(settings, 'TASK_USER_ID', 999)
     def test_timestamps(self):
         self.generate_refunds()
         r = self.client.get(self.url)
@@ -1455,7 +1393,7 @@ class TestDelete(amo.tests.TestCase):
 
 
 class TestHome(amo.tests.TestCase):
-    fixtures = ['base/addon_3615']
+    fixtures = ['base/addon_3615', 'base/users']
 
     def setUp(self):
         assert self.client.login(username='del@icio.us', password='password')
@@ -1466,6 +1404,11 @@ class TestHome(amo.tests.TestCase):
         eq_(r.status_code, 200)
         return pq(r.content)
 
+    def test_addons(self):
+        r = self.client.get(self.url)
+        eq_(r.status_code, 200)
+        self.assertTemplateUsed(r, 'devhub/index.html')
+
     def test_editor_promo(self):
         eq_(self.get_pq()('#devhub-sidebar #editor-promo').length, 1)
 
@@ -1473,6 +1416,60 @@ class TestHome(amo.tests.TestCase):
         Addon.objects.all().delete()
         # Regular users (non-devs) should not see this promo.
         eq_(self.get_pq()('#devhub-sidebar #editor-promo').length, 0)
+
+    def test_my_addons(self):
+        addon = Addon.objects.get(id=3615)
+
+        statuses = [(amo.STATUS_NOMINATED, amo.STATUS_NOMINATED),
+                    (amo.STATUS_PUBLIC, amo.STATUS_UNREVIEWED),
+                    (amo.STATUS_LITE, amo.STATUS_UNREVIEWED)]
+
+        for addon_status in statuses:
+            addon.status = addon_status[0]
+            addon.save()
+
+            file = addon.latest_version.files.all()[0]
+            file.status = addon_status[1]
+            file.save()
+
+            doc = self.get_pq()
+            addon_item = doc('#my-addons .addon-item')
+            eq_(addon_item.length, 1)
+            eq_(addon_item.find('.addon-name').attr('href'),
+                addon.get_dev_url('edit'))
+            eq_(addon_item.find('p').eq(2).find('a').attr('href'),
+                addon.current_version.get_url_path())
+            eq_('Queue Position: 1 of 1', addon_item.find('p').eq(3).text())
+            eq_(addon_item.find('.upload-new-version a').attr('href'),
+                addon.get_dev_url('versions') + '#version-upload')
+
+            addon.status = statuses[1][0]
+            addon.save()
+            doc = self.get_pq()
+            addon_item = doc('#my-addons .addon-item')
+            eq_('Status: ' + unicode(amo.STATUS_CHOICES[addon.status]),
+                addon_item.find('p').eq(1).text())
+
+        Addon.objects.all().delete()
+        eq_(self.get_pq()('#my-addons').length, 0)
+
+    def test_incomplete_no_new_version(self):
+        def no_link():
+            doc = self.get_pq()
+            addon_item = doc('#my-addons .addon-item')
+            eq_(addon_item.length, 1)
+            eq_(addon_item.find('.upload-new-version').length, 0)
+
+        addon = Addon.objects.get(id=3615)
+
+        addon.update(status=amo.STATUS_NULL)
+        no_link()
+
+        addon.update(status=amo.STATUS_DISABLED)
+        no_link()
+
+        addon.update(status=amo.STATUS_PUBLIC, disabled_by_user=True)
+        no_link()
 
 
 class TestActivityFeed(amo.tests.TestCase):
@@ -1689,7 +1686,8 @@ class TestProfile(TestProfileBase):
 
 
 class TestSubmitBase(amo.tests.TestCase):
-    fixtures = ['base/addon_3615', 'base/addon_5579', 'base/users']
+    fixtures = ['base/addon_3615', 'base/addon_5579', 'base/platforms',
+                'base/users']
 
     def setUp(self):
         assert self.client.login(username='del@icio.us', password='password')
@@ -2736,6 +2734,7 @@ class TestVersionAddFile(UploadTest):
 
         data = formset(form, platform=platform, upload=self.upload.pk,
                        initial_count=1, prefix='files')
+        data.update(formset(total_count=1, initial_count=1))
 
         r = self.client.post(self.edit_url, data)
         doc = pq(r.content)

@@ -1,48 +1,66 @@
-# compiled.txt has other prod packages that need to be compiled.
-
--e git://github.com/django/django@36c82ac8#egg=django
-Babel==0.9.5
-phpserialize==1.2
-python-daemon==1.5.5
-lockfile==0.8
-python-memcached==1.45
-pyquery==0.4
-South==0.7
-suds==0.3.9
-pytz==2010e
-GitPython==0.1.7
-django-celery==2.0.2
-# This is required by celery, but celery's setup.py does bad things and
-# packaging doesn't pick it up.
-importlib==1.0.2
-django-uuidfield==0.1
-cef==0.2
-
--e git://github.com/jbalogh/django-multidb-router.git#egg=django-multidb-router
--e git://github.com/jbalogh/django-cache-machine.git@0ca435683#egg=django-cache-machine
--e git://github.com/jbalogh/jingo.git#egg=jingo
--e git://github.com/jsocol/jingo-minify.git#egg=jingo-minify
--e git://github.com/jsocol/bleach.git#egg=bleach
--e git://github.com/jbalogh/schematic.git#egg=schematic
--e git://github.com/clouserw/hera.git#egg=hera
--e git://github.com/clouserw/tower.git#egg=tower
--e git://github.com/jbalogh/django-queryset-transform.git#egg=django-queryset-transform
--e git://github.com/jsocol/commonware.git#egg=commonware
--e git://github.com/mozilla/django-csp.git#egg=django_csp
-
--e git://github.com/mozilla/amo-validator.git#egg=amo-validator
+bleach==1.1.5
+celery-tasktree==0.3.2
+Django==1.4.1
+django_appcache==1.3
+django-browserid==0.6
+django-cache-machine==0.6
+django-cronjobs==0.2.3
+django_csp==1.0.2
+django-extensions==0.9
+django-memcached-pool==0.2
+django-multidb-router==0.5
+django-mysql-pool==0.2
+django-nose==1.1
+django-quieter-formset==0.3
+django-statsd-mozilla==0.3.7
+django-tastypie==0.9.11
+easy-thumbnails==1.1
+gunicorn==0.14.6
+metlog-py==0.9.7
+metlog-cef==0.1
+metlog-raven==0.2
+cef==0.3
+moz_inapp_pay==1.0.2
+oauth2==1.5.211
+PyBrowserID==0.6
+PyMySQL==0.5
+raven==2.0.6
+receipts==0.2.4.1
+requests==0.14.0
+statsd==1.0.0
 
 
-# Image cropping
--e git://github.com/SmileyChris/easy-thumbnails.git#egg=easy_thumbnails
+## Not on pypi.
+-e git://github.com/mattbasta/addon-packager.git@8e7b8e80e6ab57e2cafaa06e2430a68a6b74f5e2#egg=addon-packager
+-e git://github.com/mozilla/amo-validator.git@a61300a32afd0601862e389309d70b90402eb49b#egg=amo-validator
+-e git://github.com/mozilla/app-validator.git@6e508c23cec77752c4560a035b13c43d0a8e3576#egg=app-validator
+-e git://github.com/jsocol/commonware.git@27646ecaca40a89024cc581c3ecf5eb0fa87ee11#egg=commonware
+-e git://github.com/clelland/django-mysql-pymysql.git@acd2b46a885537ab9aa8e777e86a1fe86775f9ea#egg=django-mysql-pymysql
+-e git://github.com/jbalogh/django-queryset-transform@a1ba6ae41bd86f5bb9ff66fb56614e0fafe6e022#egg=django-queryset-transform
+-e git://github.com/andymckay/django-radagast@4ea83aa714787a0cc352d39aaed27473139fc9db#egg=django-radagast
+-e git://github.com/miracle2k/django-tables.git@546f339308103880c823b2056830fcdc9220edd0#egg=django-tables
+-e git://github.com/mattbasta/fastchardet.git@ec642492f47b5121c71f0cea5fa6b6b543092d4c#egg=fastchardet
+-e git://github.com/mozilla/happyforms.git@729612c2a824a7e8283d416d2084bf506c671e24#egg=happyforms
+# Temporary fork.
+-e git://github.com/andymckay/hera.git@d72c667ee48717b7a6e7ea33cd42d947c3b8600b#egg=hera
+-e git://github.com/jsocol/jingo-minify.git@d1b668ad7c0423fe8cc639df36d433da5c168cac#egg=jingo-minify
+-e git://github.com/mozilla/nuggets.git@96e80a64aa4bfcfef4f43fc3ab6966450ccd7325#egg=nuggets
+-e git://github.com/rtilder/pyjwt.git@aa3be513795c1a623dfc61c6c0a688198ea5d303#egg=pyjwt
+-e git://github.com/jbalogh/schematic.git@f996182b857769541cfa7659d4f9e864360cddf4#egg=schematic
+-e git://github.com/jbalogh/test-utils.git@3c2214d193d1b0c0d74c77b3731c8afb0173e669#egg=test-utils
+-e git://github.com/fwenzel/django-mozilla-product-details.git@36ef06539d6b34c4f345fd0d3e16937d0db9a752#egg=django-mozilla-product-details
 
-# Better Forms
--e git://github.com/mozilla/happyforms.git#egg=happyforms
+## Forked.
+-e git://github.com/andymckay/django-piston-oauth2.git@6cb1ad61e3f437e7ca080ee00ae7b80de7d010f0#egg=django-piston-oauth2
+-e git://github.com/kumar303/django-qunit.git@b0f468dcf33439488158c845df37ef3261852b55#egg=django-qunit
+-e git://github.com/mozilla/django-recaptcha.git@bbe6a921e95e4961b028b7eb5ea197d3fb54aa9a#egg=django-recaptcha
+-e git://github.com/jsocol/django-waffle.git@5986e8b466871f0847bbeafcfce59b8709680c3f#egg=django-waffle
 
-# Recaptcha
--e git://github.com/mozilla/django-recaptcha.git#egg=django-recaptcha
-
-# Django Piston
--e git://github.com/mozilla/django-piston.git#egg=django-piston
-
--e git://github.com/mozilla/nuggets.git#egg=nuggets
+## Out of date or not sure on pypi.
+-e git://github.com/jbalogh/django-mobility.git@e2b60a1f96e4c4aed736395c01bf707e969d8e83#egg=django-mobility
+-e git://github.com/jbalogh/django-pylibmc.git@e3343cefd95162f0237b2839069fb2495753d9df#egg=django-pylibmc
+-e git://github.com/jbalogh/jingo.git@b4ecca1066bcd1eac87358b4c82902442d4eedc4#egg=jingo
+-e git://github.com/jsocol/django-ratelimit@a148254a1fb4248a34cf753d594af1e73bec455c#egg=django-ratelimit
+-e git://github.com/mozilla/elasticutils.git@98f210e2b3fe2451b63ad6abbf50e8ab690ef5a3#egg=elasticutils
+-e git://github.com/andymccurdy/redis-py.git@79d22358410936358c71c88abbdb2a26e3cedc28#egg=redis-py
+-e git://github.com/clouserw/tower.git@1dfa7345019e79eb7dfce6315c0493e68e6b134a#egg=tower

@@ -208,7 +208,7 @@ class APITest(TestCase):
         """
         Check separate handler404 response for API.
         """
-        response = self.client.get('/en-us/firefox/api/nonsense')
+        response = self.client.get('/en-US/firefox/api/nonsense')
         doc = pq(response.content)
         eq_(response.status_code, 404)
         d = doc('error')
@@ -562,7 +562,7 @@ class APITest(TestCase):
 
 class ListTest(TestCase):
     """Tests the list view with various urls."""
-    fixtures = ['base/apps', 'base/addon_3615', 'base/featured',
+    fixtures = ['base/apps', 'base/users', 'base/addon_3615', 'base/featured',
                 'addons/featured', 'bandwagon/featured_collections',
                 'base/collections']
 

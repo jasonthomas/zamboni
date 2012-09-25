@@ -36,6 +36,7 @@ $(document).ready(function() {
     // Submission > Media
     $('#submit-media').exists(function() {
         initUploadIcon();
+        initUploadImages();
         initUploadPreview();
     });
 
@@ -199,10 +200,34 @@ $(document).ready(function() {
     });
     $('#modal-disable').modal('#disable-addon', {
         width: 400,
-        callback: function(d){
+        callback: function(d) {
             $('.version_id', this).val($(d.click_target).attr('data-version'));
             return true;
         }
+    });
+
+    $('#version-list').exists(function() {
+        var status = $('#version-status').data('status');
+        var versions = $('#modal-delete-version').data('versions');
+        $('#modal-delete-version').modal('.delete-version', {
+            width: 400,
+            callback: function(d) {
+                var version = versions[$(d.click_target).data('version')],
+                    $header = $('h3', this);
+                $header.text(format($header.attr('data-tmpl'), version));
+                $('.version-id', this).val(version.id);
+                if (versions.num == 1) {
+                    $('#last-version, #last-version-other').show();
+                    if (status == 2) {  // PENDING
+                        $('#last-version-pending').show();
+                    } else if (status == 4) {  // PUBLIC
+                        $('#last-version-public').show();
+                    }
+                } else {
+                    $('#not-last-version').show();
+                }
+            }
+        });
     });
 
     // In-app payments config.
@@ -284,6 +309,13 @@ function addonFormSubmit() {
         var baseurl = function(){
             return parent_div.find('#addon-edit-basic').attr('data-baseurl');
         };
+
+        // This exists because whoever wrote `imageStatus` didn't think there'd
+        // ever be anything besides icons and previews.
+        $('.image_preview_box .image img').each(function(index, el) {
+            el.src = imageStatus.newurl(el.src);
+        });
+
         $('.edit-media-button button').attr('disabled', false);
         $('form', parent_div).submit(function(e){
             e.preventDefault();
@@ -374,6 +406,7 @@ function initEditAddon() {
     // Init icon javascript.
     hideSameSizedIcons();
     initUploadIcon();
+    initUploadImages();
     initUploadPreview();
 }
 
@@ -583,6 +616,8 @@ function initUploadIcon() {
         $('#icon_preview_32 img').attr('src', $('img', $parent).attr('src'));
         $('#icon_preview_64 img').attr('src', $('img',
                 $parent).attr('src').replace(/32/, '64'));
+        $('#icon_preview_128 img').attr('src', $('img',
+                $parent).attr('src').replace(/32/, '128'));
 
         $error_list.html("");
     });
@@ -641,6 +676,75 @@ function initUploadIcon() {
         var $data = $(elem);
         if ($data.val()) {
             $('#submit-media #icon_preview img').attr('src', $data.val());
+        }
+    });
+}
+
+function initUploadImages() {
+    var forms = {},
+        form;
+
+    function upload_start_all(e) {
+        // Remove old errors.
+        $(this).closest('.image_preview').find('.errorlist').hide();
+        // Don't let users submit a form.
+        $('.edit-media-button button, #submit-media button.prominent').attr('disabled', true);
+    }
+
+    function upload_finished_all(e) {
+        // They can submit again
+        $('.edit-media-button button, #submit-media button.prominent').attr('disabled', false);
+    }
+
+    function upload_start(e, file) {
+        var $input = $(this);
+        forms['form_' + file.instance] = form = $input.closest('.image_preview');
+
+        var $thumb = form.show().find('.image');
+        $thumb.addClass('loading');
+        $thumb.find('img').attr('src', file.dataURL);
+    }
+
+    function upload_finished(e, file) {
+        form = forms['form_' + file.instance];
+        form.find('.image').removeClass('loading');
+    }
+
+    function upload_success(e, file, upload_hash) {
+        form = forms['form_' + file.instance];
+        form.find('[name$="upload_hash"]').val(upload_hash);
+        form.find('[name$="unsaved_image_data"]').val(file.dataURL);
+    }
+
+    function upload_errors(e, file, errors) {
+        var form = forms['form_' + file.instance],
+            $error_list = form.find('.errorlist');
+
+        $.each(errors, function(i, v){
+            $error_list.append('<li>' + v + '</li>');
+        });
+
+        form.find('.image').addClass('error-loading');
+    }
+    if (z.capabilities.fileAPI) {
+        var $f = $('.edit-media, #submit-media');
+        $f.delegate('.image_asset_upload', 'upload_finished', upload_finished)
+          .delegate('.image_asset_upload', 'upload_success', upload_success)
+          .delegate('.image_asset_upload', 'upload_start', upload_start)
+          .delegate('.image_asset_upload', 'upload_errors', upload_errors)
+          .delegate('.image_asset_upload', 'upload_start_all', upload_start_all)
+          .delegate('.image_asset_upload', 'upload_finished_all', upload_finished_all)
+          .delegate('.image_asset_upload', 'change', function(e) {
+            $(this).imageUploader();
+          });
+    }
+
+    // Display images that were already uploaded but not yet saved
+    // because of other non-related form errors.
+    $('.image_preview_box [name$="unsaved_image_data"]').each(function(i, elem) {
+        var $data = $(elem);
+        if ($data.val()) {
+            $data.parents('.image_preview_box').find('.image img').attr('src', $data.val());
         }
     });
 }
@@ -937,6 +1041,7 @@ function imagePoller() {
 var imageStatus = {
     start: function(do_icon, do_preview) {
         this.icon = new imagePoller();
+        this.imageasset = new imagePoller();
         this.preview = new imagePoller();
         this.icon.check = function() {
             var self = imageStatus,

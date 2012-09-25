@@ -17,7 +17,7 @@ body {
             width: 144px;
         }
     }
-    &[data-page-type='leaf'] {
+    &[data-page-type='leaf'], &[data-page-type='alpha'] {
         .header-button {
             &.back {
                 display: block;
@@ -27,6 +27,14 @@ body {
     &[data-page-type='root'] {
         .header-button {
             &.search, &.settings {
+                display: block;
+            }
+        }
+    }
+    // Simple single pages with a home icon.
+    &[data-page-type='notice'] {
+        .header-button {
+            &.home {
                 display: block;
             }
         }

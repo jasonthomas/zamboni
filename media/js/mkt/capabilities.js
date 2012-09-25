@@ -1,3 +1,8 @@
+function safeMatchMedia(query) {
+    var m = window.matchMedia(query);
+    return !!m && m.matches;
+}
+
 z.capabilities = {
     'JSON': window.JSON && typeof JSON.parse == 'function',
     'debug': (('' + document.location).indexOf('dbg') >= 0),
@@ -14,10 +19,10 @@ z.capabilities = {
     ),
     'fileAPI': !!window.FileReader,
     'userAgent': navigator.userAgent,
-    'desktop': window.matchMedia('(min-width: 673px)').matches,
-    'tablet': window.matchMedia('(max-width: 672px)').matches &&
-              window.matchMedia('(min-width: 601px)').matches,
-    'mobile': window.matchMedia('(max-width: 600px)').matches,
+    'desktop': safeMatchMedia('(min-width: 673px)'),
+    'tablet': safeMatchMedia('(max-width: 672px)') &&
+              safeMatchMedia('(min-width: 601px)'),
+    'mobile': safeMatchMedia('(max-width: 600px)'),
     'touch': ('ontouchstart' in window) || window.DocumentTouch && document instanceof DocumentTouch,
     'nativeScroll': (function() {
         return 'WebkitOverflowScrolling' in document.createElement('div').style;
@@ -25,6 +30,11 @@ z.capabilities = {
     'performance': !!(window.performance || window.msPerformance || window.webkitPerformance || window.mozPerformance),
     'navPay': !!navigator.mozPay
 };
+
+// Packaged-app installation are supported only on Firefox OS, so this is how we sniff.
+z.capabilities.gaia = !!(z.capabilities.mobile && navigator.mozApps && navigator.mozApps.installPackage);
+z.capabilities.android = z.capabilities.mobile && !z.capabilities.gaia;
+
 z.capabilities.getDeviceType = function() {
     return this.desktop ? 'desktop' : (this.tablet ? 'tablet' : 'mobile');
 };

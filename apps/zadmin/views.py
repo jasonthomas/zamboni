@@ -1,6 +1,5 @@
 import csv
 import json
-import os
 from decimal import Decimal
 from urlparse import urlparse
 
@@ -8,6 +7,8 @@ from django import http
 from django.conf import settings
 from django.contrib import admin
 from django.core.cache import cache
+from django.core.exceptions import PermissionDenied
+from django.core.files.storage import default_storage as storage
 from django.db.models.loading import cache as app_cache
 from django.shortcuts import get_object_or_404, redirect
 from django.utils.encoding import smart_str
@@ -41,8 +42,6 @@ from devhub.models import ActivityLog
 from files.models import Approval, File
 from files.tasks import start_upgrade as start_upgrade_task
 from files.utils import find_jetpacks, JetpackUpgrader
-from mkt.stats.cron import index_latest_mkt_stats, index_mkt_stats
-from mkt.stats.search import setup_mkt_indexes
 from stats.cron import index_latest_stats
 from stats.search import setup_indexes
 from users.cron import reindex_users
@@ -60,6 +59,15 @@ from .forms import (AddonStatusForm, BulkValidationForm, CompatForm,
 from .models import EmailPreviewTopic, ValidationJob, ValidationJobTally
 
 log = commonware.log.getLogger('z.zadmin')
+
+# This causes AMO problems if inapp gets imported. Then cache machine tries
+# to query it to see if it exists.
+if settings.MARKETPLACE and settings.IN_TEST_SUITE:
+    from mkt.stats.cron import index_latest_mkt_stats, index_mkt_stats
+    from mkt.stats.search import setup_mkt_indexes
+else:
+    index_latest_mkt_stats, index_mkt_stats = None, None
+    setup_mkt_indexes = None
 
 
 @admin_required(reviewers=True)
@@ -615,10 +623,14 @@ def email_devs(request):
         qs = (AddonUser.objects.filter(role__in=(amo.AUTHOR_ROLE_DEV,
                                                  amo.AUTHOR_ROLE_OWNER),
                                        addon__status__in=listed)
-                               .exclude(user__email=None)
-                               .distinct(['user__email']))
+                               .exclude(user__email=None))
         if data['recipients'] == 'eula':
             qs = qs.exclude(addon__eula=None)
+        elif data['recipients'] == 'payments':
+            qs = qs.filter(addon__type=amo.ADDON_WEBAPP)
+            qs = qs.exclude(addon__paypal_id=None)
+            qs = qs.exclude(addon__premium_type__in=(amo.ADDON_FREE,
+                                                     amo.ADDON_OTHER_INAPP))
         elif data['recipients'] == 'sdk':
             qs = qs.exclude(addon__versions__files__jetpack_version=None)
         else:
@@ -628,7 +640,8 @@ def email_devs(request):
             # Clear out the last batch of previewed emails.
             preview.filter().delete()
         total = 0
-        for emails in chunked(qs.values_list('user__email', flat=True), 100):
+        for emails in chunked(set(qs.values_list('user__email', flat=True)),
+                              100):
             total += len(emails)
             tasks.admin_email.delay(emails, data['subject'], data['message'],
                                     preview_only=data['preview_only'],
@@ -663,7 +676,7 @@ def addon_search(request):
                        .query(name__text=q.lower())
                        .filter(type__in=amo.MARKETPLACE_TYPES if
                                         settings.MARKETPLACE else
-                                        amo.ADDON_ADMIN_SEARCH_TYPES)[:100])
+                                        amo.get_admin_search_types())[:100])
         if len(qs) == 1:
             return redirect('zadmin.addon_manage', qs[0].id)
         ctx['addons'] = qs
@@ -687,7 +700,7 @@ def oauth_consumer_create(request):
 @json_view
 def general_search(request, app_id, model_id):
     if not admin.site.has_permission(request):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     model = app_cache.get_model(app_id, model_id)
     if not model:
@@ -699,9 +712,9 @@ def general_search(request, app_id, model_id):
     # This is a hideous api, but uses the builtin admin search_fields API.
     # Expecting this to get replaced by ES so soon, that I'm not going to lose
     # too much sleep about it.
-    cl = ChangeList(request, obj.model, [], [], [], [],
-                    obj.search_fields, [], limit, [], obj)
-    qs = cl.get_query_set()
+    cl = ChangeList(request, obj.model, [], [], [], [], obj.search_fields, [],
+                    obj.list_max_show_all, limit, [], obj)
+    qs = cl.get_query_set(request)
     # Override search_fields_response on the ModelAdmin object
     # if you'd like to pass something else back to the front end.
     lookup = getattr(obj, 'search_fields_response', None)
@@ -768,7 +781,7 @@ def addon_manage(request, addon):
 def recalc_hash(request, file_id):
 
     file = get_object_or_404(File, pk=file_id)
-    file.size = int(max(1, round(os.path.getsize(file.file_path) / 1024, 0)))
+    file.size = storage.size(file.file_path)
     file.hash = file.generate_hash()
     file.save()
 

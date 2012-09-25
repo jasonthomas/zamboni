@@ -1,8 +1,10 @@
+import collections
 from datetime import datetime
 import json
 
 from django.conf import settings
 from django.core import mail
+from django.core.exceptions import SuspiciousOperation
 from django import http
 from django.core.cache import cache
 from django.contrib.auth.models import User
@@ -375,6 +377,8 @@ class TestEditAdmin(UserViewBase):
         eq_(res[0].details['password'][0], u'****')
 
 
+FakeResponse = collections.namedtuple("FakeResponse", "status_code content")
+
 class TestPasswordAdmin(UserViewBase):
     fixtures = ['base/users']
 
@@ -459,11 +463,23 @@ class TestLogin(UserViewBase):
         r = self.client.get(self.url, follow=True)
         self.assertRedirects(r, '/en-US/firefox/')
 
+    def test_ok_redirects(self):
+        r = self.client.post(self.url, self.data, follow=True)
+        self.assertRedirects(r, '/en-US/firefox/')
+
         r = self.client.get(self.url + '?to=/de/firefox/', follow=True)
         self.assertRedirects(r, '/de/firefox/')
 
-        r = self.client.get(self.url + '?to=http://xx.com', follow=True)
+    def test_bad_redirects(self):
+        r = self.client.post(self.url, self.data, follow=True)
         self.assertRedirects(r, '/en-US/firefox/')
+
+        for redirect in ['http://xx.com',
+                         'data:text/html,<script>window.alert("xss")</script>',
+                         'mailto:test@example.com',
+                         'file:///etc/passwd']:
+            with self.assertRaises(SuspiciousOperation):
+                self.client.get(urlparams(self.url, to=redirect), follow=True)
 
     def test_login_link(self):
         r = self.client.get(self.url)
@@ -579,20 +595,33 @@ class TestLogin(UserViewBase):
         eq_(user.get().failed_login_attempts, 4)
 
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_browserid_login_success(self, http_request):
         """
         A success response from BrowserID results in successful login.
         """
         url = reverse('users.browserid_login')
-        http_request.return_value = (200, json.dumps({'status': 'okay',
-                                          'email': 'jbalogh@mozilla.com'}))
+        http_request.return_value = FakeResponse(200, json.dumps(
+                {'status': 'okay',
+                 'email': 'jbalogh@mozilla.com'}))
         res = self.client.post(url, data=dict(assertion='fake-assertion',
                                               audience='fakeamo.org'))
         eq_(res.status_code, 200)
 
         # If they're already logged in we return fast.
         eq_(self.client.post(url).status_code, 200)
+
+    @patch.object(waffle, 'switch_is_active', lambda x: True)
+    @patch('users.models.UserProfile.log_login_attempt')
+    @patch('requests.post')
+    def test_browserid_login_logged(self, http_request, log_login_attempt):
+        url = reverse('users.browserid_login')
+        http_request.return_value = FakeResponse(200, json.dumps(
+                {'status': 'okay',
+                 'email': 'jbalogh@mozilla.com'}))
+        self.client.post(url, data=dict(assertion='fake-assertion',
+                                        audience='fakeamo.org'))
+        log_login_attempt.assert_called_once_with(True)
 
     def _make_admin_user(self, email):
         """
@@ -605,14 +634,15 @@ class TestLogin(UserViewBase):
         GroupUser.objects.create(group=admingroup, user=p)
 
     def _browserid_login(self, email, http_request):
-        http_request.return_value = (200, json.dumps({'status': 'okay',
-                                                      'email': email}))
+        http_request.return_value = FakeResponse(200,
+                                                 json.dumps({'status': 'okay',
+                                                             'email': email}))
         return self.client.post(reverse('users.browserid_login'),
                                 data=dict(assertion='fake-assertion',
                                           audience='fakeamo.org'))
 
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_browserid_restricted_login(self, http_request):
         """
         A success response from BrowserID for accounts restricted to
@@ -625,7 +655,7 @@ class TestLogin(UserViewBase):
         eq_(res.status_code, 400)
 
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_browserid_no_account(self, http_request):
         """
         BrowserID login for an email address with no account creates a
@@ -641,7 +671,7 @@ class TestLogin(UserViewBase):
 
     @patch.object(waffle, 'switch_is_active', lambda x: True)
     @patch.object(settings, 'APP_PREVIEW', True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_browserid_mark_as_market(self, http_request):
         email = 'newuser@example.com'
         self._browserid_login(email, http_request)
@@ -649,7 +679,7 @@ class TestLogin(UserViewBase):
         assert '__market__' in profile.notes
 
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_browserid_no_mark_as_market(self, http_request):
         email = 'newuser@example.com'
         self._browserid_login(email, http_request)
@@ -658,14 +688,14 @@ class TestLogin(UserViewBase):
 
     @patch.object(settings, 'REGISTER_USER_LIMIT', 1)
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_browserid_register_limit(self, http_request):
         """
         Account creation via BrowserID respects
         settings.REGISTER_USER_LIMIT.
         """
 
-        http_request.return_value = (200, json.dumps(
+        http_request.return_value = FakeResponse(200, json.dumps(
                 {'status': 'okay',
                  'email': 'extrauser@example.com'}))
         old_profile_count = UserProfile.objects.count()
@@ -684,11 +714,12 @@ class TestLogin(UserViewBase):
     @patch.object(settings, 'REGISTER_USER_LIMIT', 1)
     @patch.object(settings, 'REGISTER_OVERRIDE_TOKEN', 'mozilla')
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_override_browserid_register_limit(self, http_request):
         email = 'override-user@example.com'
-        http_request.return_value = (200, json.dumps({'status': 'okay',
-                                                      'email': email}))
+        http_request.return_value = FakeResponse(200,
+                                                 json.dumps({'status': 'okay',
+                                                             'email': email}))
         self.client.cookies['reg_override_token'] = 'mozilla'
         res = self.client.post(reverse('users.browserid_login'),
                                data=dict(assertion='fake-assertion',
@@ -701,11 +732,12 @@ class TestLogin(UserViewBase):
     @patch.object(settings, 'REGISTER_USER_LIMIT', 1)
     @patch.object(settings, 'REGISTER_OVERRIDE_TOKEN', 'mozilla')
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_override_browserid_register_wrong_token(self, http_request):
         email = 'override-user@example.com'
-        http_request.return_value = (200, json.dumps({'status': 'okay',
-                                                      'email': email}))
+        http_request.return_value = FakeResponse(200,
+                                                 json.dumps({'status': 'okay',
+                                                             'email': email}))
         self.client.cookies['reg_override_token'] = 'netscape'
         res = self.client.post(reverse('users.browserid_login'),
                                data=dict(assertion='fake-assertion',
@@ -719,12 +751,13 @@ class TestLogin(UserViewBase):
         eq_(self.client.cookies['reg_override_token'].value, 'letmein')
 
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
+    @patch('requests.post')
     def test_browserid_login_failure(self, http_request):
         """
         A failure response from BrowserID results in login failure.
         """
-        http_request.return_value = (200, json.dumps({'status': 'busted'}))
+        http_request.return_value = FakeResponse(200, json.dumps(
+                {'status': 'busted'}))
         res = self.client.post(reverse('users.browserid_login'),
                                data=dict(assertion='fake-assertion',
                                          audience='fakeamo.org'))
@@ -763,11 +796,11 @@ class TestLogin(UserViewBase):
         assert login.called
 
     @patch.object(waffle, 'switch_is_active', lambda x: True)
-    @patch('httplib2.Http.request')
-    def test_browserid_duplicate_username(self, http_request):
+    @patch('requests.post')
+    def test_browserid_duplicate_username(self, post):
         email = 'jbalogh@example.com'  # existing
-        http_request.return_value = (200, json.dumps({'status': 'okay',
-                                                      'email': email}))
+        post.return_value = FakeResponse(200, json.dumps({'status': 'okay',
+                                                          'email': email}))
         res = self.client.post(reverse('users.browserid_login'),
                                data=dict(assertion='fake-assertion',
                                          audience='fakeamo.org'))

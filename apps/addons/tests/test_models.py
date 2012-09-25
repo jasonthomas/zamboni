@@ -34,6 +34,7 @@ from applications.models import Application, AppVersion
 from compat.models import CompatReport
 from constants.applications import DEVICE_TYPES
 from devhub.models import ActivityLog, AddonLog, RssKey, SubmitStep
+from editors.models import EscalationQueue
 from files.models import File, Platform
 from files.tests.test_models import TestLanguagePack, UploadTest
 from market.models import AddonPaymentData, AddonPremium, Price
@@ -58,9 +59,12 @@ class TestAddonManager(amo.tests.TestCase):
         eq_(Addon.objects.featured(amo.FIREFOX).count(), 3)
 
     def test_listed(self):
+        # We need this for the fixtures, but it messes up the tests.
+        Addon.objects.get(pk=3615).update(disabled_by_user=True)
+        # No continue as normal.
         Addon.objects.filter(id=5299).update(disabled_by_user=True)
         q = Addon.objects.listed(amo.FIREFOX, amo.STATUS_PUBLIC)
-        eq_(len(q.all()), 5)
+        eq_(len(q.all()), 4)
 
         addon = q[0]
         eq_(addon.id, 2464)
@@ -70,19 +74,19 @@ class TestAddonManager(amo.tests.TestCase):
         addon.save()
 
         # Should be 3 now, since the one is now disabled.
-        eq_(q.count(), 4)
+        eq_(q.count(), 3)
 
         # If we search for public or unreviewed we find it.
         addon.disabled_by_user = False
         addon.status = amo.STATUS_UNREVIEWED
         addon.save()
-        eq_(q.count(), 4)
+        eq_(q.count(), 3)
         eq_(Addon.objects.listed(amo.FIREFOX, amo.STATUS_PUBLIC,
                                  amo.STATUS_UNREVIEWED).count(), 4)
 
         # Can't find it without a file.
         addon.versions.get().files.get().delete()
-        eq_(q.count(), 4)
+        eq_(q.count(), 3)
 
     def test_public(self):
         public = Addon.objects.public()
@@ -1330,7 +1334,7 @@ class TestAddonModelsFeatured(amo.tests.TestCase):
 
 
 class TestBackupVersion(amo.tests.TestCase):
-    fixtures = ['addons/update']
+    fixtures = ['addons/update', 'base/platforms']
 
     def setUp(self):
         self.version_1_2_0 = 105387
@@ -1985,11 +1989,11 @@ class TestAddonUpsell(amo.tests.TestCase):
         self.two = Addon.objects.create(type=amo.ADDON_EXTENSION,
                                         name='premium')
         self.upsell = AddonUpsell.objects.create(free=self.one,
-                                                 premium=self.two, text='yup')
+                                                 premium=self.two)
 
     def test_create_upsell(self):
+        eq_(self.one.upsell.free, self.one)
         eq_(self.one.upsell.premium, self.two)
-        eq_(self.one.upsell.text, 'yup')
         eq_(self.two.upsell, None)
 
 
@@ -2274,3 +2278,12 @@ class TestIncompatibleVersions(amo.tests.TestCase):
 
         version2.delete()
         eq_(IncompatibleVersions.objects.count(), 0)
+
+
+class TestQueue(amo.tests.TestCase):
+
+    def test_in_queue(self):
+        addon = Addon.objects.create(guid='f', type=amo.ADDON_EXTENSION)
+        assert not addon.in_escalation_queue()
+        EscalationQueue.objects.create(addon=addon)
+        assert addon.in_escalation_queue()

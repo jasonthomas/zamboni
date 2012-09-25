@@ -13,9 +13,8 @@ from addons.models import Addon
 from applications.models import Application, AppVersion
 from bandwagon.models import Collection
 from devhub.models import ActivityLog, AppLog, LegacyAddonLog
-from editors.models import EventLog
+from editors.models import EscalationQueue, EventLog
 from market.models import Refund
-from mkt.reviewers.models import EscalationQueue
 from reviews.models import Review
 from stats.models import Contribution
 from users.utils import get_task_user
@@ -189,7 +188,7 @@ def find_refund_escalations(addon_id, **kw):
         # it has been detected and dealt with already.
         logs = (AppLog.objects.filter(
             activity_log__action=amo.LOG.ESCALATED_HIGH_REFUNDS.id,
-            addon=addon).order_by('-created'))
+            addon=addon).order_by('-created', '-id'))
         if logs:
             since_ratio = Refund.recent_refund_ratio(addon.id, logs[0].created)
             # If not high enough ratio since the last logged, do not add to

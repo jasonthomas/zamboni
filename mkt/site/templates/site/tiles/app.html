@@ -7,10 +7,14 @@
 <{{ tag }} class="{{ classes }}"
   {% if link %}href="{{ product.get_url_path()|urlparams(src=data_attrs.src) }}"{% endif %}
   {% for k, v in data_attrs.items() %} data-{{ k }}="{{ v }}"{% endfor %}>
+  <img class="icon mobile_tile" alt="{{ _('icon') }}" src="{{ product.get_image_asset_url('mobile_tile') }}">
   <img class="icon" alt="{{ _('icon') }}" src="{{ product.get_icon_url(64) }}">
   <div class="info">
     <h3>{{ product.name }}</h3>
-    {{ market_button(product) }}
+    {# `current_version` won't show versions with invalid statuses #}
+    {% if product.current_version %}
+      {{ market_button(product) }}
+    {% endif %}
     {% if product.listed_authors %}
       <div class="author lineclamp vital">{{ product.listed_authors[0].name }}</div>
     {% endif %}
@@ -20,7 +24,9 @@
         {{ product.average_rating|float|stars }}
         {% if product.total_reviews %}
           <span class="cnt">
-            {% trans cnt=product.total_reviews|numberfmt %}
+            {% trans num=product.total_reviews, cnt=product.total_reviews|numberfmt %}
+              {{ cnt }} Rating
+            {% pluralize %}
               {{ cnt }} Ratings
             {% endtrans %}
           </span>

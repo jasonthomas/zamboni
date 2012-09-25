@@ -8,10 +8,11 @@ import traceback
 import uuid
 
 from django import http
+from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage as storage
 from django.conf import settings
 from django import forms as django_forms
-from django.db import models, transaction
+from django.db import transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect
 from django.utils.http import urlquote
@@ -100,8 +101,17 @@ def index(request):
     if settings.APP_PREVIEW:
         # This can be a permanent redirect when we finalize devhub for apps.
         return redirect('devhub.apps')
-    return jingo.render(request, 'devhub/index.html',
-                        {'blog_posts': _get_posts()})
+
+    ctx = {'blog_posts': _get_posts()}
+    if request.amo_user:
+        user_addons = request.amo_user.addons.exclude(type=amo.ADDON_WEBAPP)
+        recent_addons = user_addons.order_by('-modified')[:3]
+        ctx['recent_addons'] = []
+        for addon in recent_addons:
+            ctx['recent_addons'].append({'addon': addon,
+                                         'position': get_position(addon)})
+
+    return jingo.render(request, 'devhub/index.html', ctx)
 
 
 @login_required
@@ -255,7 +265,7 @@ def feed(request, addon_id=None):
 
             if not acl.check_addon_ownership(request, addons, viewer=True,
                                              ignore_disabled=True):
-                return http.HttpResponseForbidden()
+                raise PermissionDenied
         else:
             rssurl = _get_rss_feed(request)
             addon = None
@@ -628,7 +638,7 @@ def check_addon_compatibility(request):
 @json_view
 def file_perf_tests_start(request, addon_id, addon, file_id):
     if not waffle.flag_is_active(request, 'perf-tests'):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     file_ = get_object_or_404(File, pk=file_id)
 
     plats = perf.PLATFORM_MAP.get(file_.platform.id, None)
@@ -1675,7 +1685,7 @@ def _resume(addon, step):
 @dev_required
 def submit_bump(request, addon_id, addon, webapp=False):
     if not acl.action_allowed(request, 'Admin', 'EditSubmitStep'):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     step = SubmitStep.objects.filter(addon=addon)
     step = step[0] if step else None
     if request.method == 'POST' and request.POST.get('step'):
@@ -1693,7 +1703,7 @@ def submit_bump(request, addon_id, addon, webapp=False):
 @login_required
 def submit_persona(request):
     if not waffle.flag_is_active(request, 'submit-personas'):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     form = addon_forms.NewPersonaForm(data=request.POST or None,
                                       files=request.FILES or None,
                                       request=request)
@@ -1707,7 +1717,7 @@ def submit_persona(request):
 @dev_required
 def submit_persona_done(request, addon_id, addon):
     if not waffle.flag_is_active(request, 'submit-personas'):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     if addon.is_public():
         return redirect(addon.get_url_path())
     return jingo.render(request, 'devhub/personas/submit_done.html',
@@ -1763,7 +1773,7 @@ def validator_redirect(request, version_id):
 @addon_view
 def admin(request, addon):
     if not acl.action_allowed(request, 'Addons', 'Configure'):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     form = forms.AdminForm(request, request.POST or None, instance=addon)
     if form.is_valid():
         form.save()

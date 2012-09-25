@@ -6,13 +6,16 @@ from django.shortcuts import get_object_or_404, redirect
 import commonware.log
 from commonware.response.decorators import xframe_allow
 import jingo
+from session_csrf import anonymous_csrf_exempt
 from tower import ugettext as _
 import waffle
 
+from abuse.models import send_abuse_report
 from access import acl
 import amo
 from amo.decorators import (login_required, permission_required, post_required,
                             write)
+from amo.forms import AbuseForm
 from amo.helpers import absolutify
 from amo.urlresolvers import reverse
 from amo.utils import paginate
@@ -26,6 +29,7 @@ from users.views import logout
 from mkt.account.forms import CurrencyForm
 from mkt.site import messages
 from . import forms
+from .decorators import profile_view
 from .utils import purchase_list
 
 log = commonware.log.getLogger('mkt.account')
@@ -69,7 +73,7 @@ def payment(request, status=None):
                 # If there is a target, bounce to it and don't show a message
                 # we'll let whatever set this up worry about that.
                 if data.get('complete'):
-                    return redirect(data['complete'])
+                    return http.HttpResponseRedirect(data['complete'])
 
                 messages.success(request,
                     _("You're all set for instant app purchases with PayPal."))
@@ -79,7 +83,7 @@ def payment(request, status=None):
             # The user has chosen to cancel out of PayPal. Nothing really
             # to do here, PayPal just bounce to the cancel page if defined.
             if data.get('cancel'):
-                return redirect(data['cancel'])
+                return http.HttpResponseRedirect(data['cancel'])
 
             messages.success(request,
                 _('Your payment pre-approval has been cancelled.'))
@@ -180,7 +184,7 @@ def preapproval(request, complete=None, cancel=None):
 
     paypal_log.info(u'Got preapproval key for user: %s' % request.amo_user.pk)
     request.session['setup-preapproval'] = store
-    return redirect(url)
+    return http.HttpResponseRedirect(url)
 
 
 def purchases(request, product_id=None, template=None):
@@ -255,12 +259,8 @@ def delete_photo(request):
     return http.HttpResponse()
 
 
-def profile(request, username):
-    if username.isdigit():
-        user = get_object_or_404(UserProfile, id=username)
-    else:
-        user = get_object_or_404(UserProfile, username=username)
-
+@profile_view
+def profile(request, user):
     edit_any_user = acl.action_allowed(request, 'Users', 'Edit')
     own_profile = (request.user.is_authenticated() and
                    request.amo_user.id == user.id)
@@ -286,3 +286,16 @@ def activity_log(request, userid):
     all_apps = request.amo_user.addons.filter(type=amo.ADDON_WEBAPP)
     return jingo.render(request, 'account/activity.html',
                         {'log': _get_items(None, all_apps)})
+
+
+@anonymous_csrf_exempt
+@profile_view
+def abuse(request, profile):
+    form = AbuseForm(request.POST or None, request=request)
+    if request.method == 'POST' and form.is_valid():
+        send_abuse_report(request, profile, form.cleaned_data['text'])
+        messages.success(request, _('Abuse reported.'))
+        return redirect(reverse('users.profile', args=[profile.username]))
+    else:
+        return jingo.render(request, 'account/abuse.html',
+                            {'abuse_form': form, 'profile': profile})

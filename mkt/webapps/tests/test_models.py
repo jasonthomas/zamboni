@@ -1,27 +1,31 @@
 from datetime import datetime, timedelta
 import json
 import unittest
+import zipfile
 
 from django.conf import settings
 
 import mock
+import waffle
 from nose import SkipTest
 from nose.tools import eq_, raises
-import waffle
 
+import amo
 from addons.models import (Addon, AddonCategory, AddonDeviceType, AddonPremium,
                            BlacklistedSlug, Category, Preview)
-import amo
-from amo.tests import app_factory, TestCase, WebappTestCase
+from amo.tests import (app_factory, ESTestCase, TestCase, version_factory,
+                       WebappTestCase)
 from constants.applications import DEVICE_TYPES
-from market.models import Price
+from editors.models import RereviewQueue
 from files.models import File
+from market.models import Price
 from users.models import UserProfile
 from versions.models import Version
 
 import mkt
-from mkt.submit.tests.test_views import BaseWebAppTest
+from mkt.submit.tests.test_views import BasePackagedAppTest, BaseWebAppTest
 from mkt.webapps.models import AddonExcludedRegion, Webapp
+from mkt.zadmin.models import FeaturedApp, FeaturedAppRegion
 
 
 class TestWebapp(TestCase):
@@ -173,6 +177,11 @@ class TestWebapp(TestCase):
         get_manifest_json.return_value = {'icons': {}}
         eq_(webapp.has_icon_in_manifest(), True)
 
+    def test_no_version(self):
+        webapp = Webapp()
+        eq_(webapp.get_manifest_json(), None)
+        eq_(webapp.current_version, None)
+
     def test_has_price(self):
         webapp = Webapp(premium_type=amo.ADDON_PREMIUM)
         webapp._premium = mock.Mock()
@@ -221,9 +230,8 @@ class TestWebapp(TestCase):
 
     def test_get_regions_no_exclusions(self):
         # This returns the class definitions for the *included* regions.
-        regions = dict(mkt.regions.REGIONS_CHOICES_ID_DICT).values()
-        regions.remove(mkt.regions.WORLDWIDE)
-        eq_(sorted(Webapp().get_regions()), sorted(regions))
+        eq_(sorted(Webapp().get_regions()),
+            sorted(mkt.regions.REGIONS_CHOICES_ID_DICT.values()))
 
     def test_get_regions_with_exclusions(self):
         w1 = Webapp.objects.create()
@@ -236,8 +244,7 @@ class TestWebapp(TestCase):
         AddonExcludedRegion.objects.create(addon=w2,
             region=mkt.regions.UK.id)
 
-        all_regions = dict(mkt.regions.REGIONS_CHOICES_ID_DICT).values()
-        all_regions.remove(mkt.regions.WORLDWIDE)
+        all_regions = mkt.regions.REGIONS_CHOICES_ID_DICT.values()
 
         w1_regions = list(all_regions)
         w1_regions.remove(mkt.regions.CA)
@@ -254,15 +261,12 @@ class TestWebapp(TestCase):
     def test_package_helpers(self):
         app1 = app_factory()
         eq_(app1.is_packaged, False)
-        eq_(app1.has_packaged_files, False)
-        app2 = app_factory(file_kw=dict(is_packaged=True))
+        app2 = app_factory(is_packaged=True)
         eq_(app2.is_packaged, True)
-        eq_(app2.has_packaged_files, True)
 
     def test_package_no_version(self):
         webapp = Webapp.objects.create(manifest_url='http://foo.com')
         eq_(webapp.is_packaged, False)
-        eq_(webapp.has_packaged_files, False)
 
 
 class TestWebappVersion(amo.tests.TestCase):
@@ -307,9 +311,7 @@ class TestWebappManager(TestCase):
 
     def test_listed(self):
         # Public status, non-null current version, non-user-disabled.
-        w = Webapp.objects.create(status=amo.STATUS_PUBLIC)
-        w._current_version = Version.objects.create(addon=w)
-        w.save()
+        w = app_factory(status=amo.STATUS_PUBLIC)
         self.listed_eq([w])
 
     def test_unlisted(self):
@@ -326,6 +328,31 @@ class TestWebappManager(TestCase):
         self.listed_eq()
 
 
+class TestDisabledPayments(ESTestCase):
+
+    def setUp(self):
+        self.create_switch(name='disabled-payments')
+        wa = Webapp.objects.create(status=amo.STATUS_PUBLIC,
+                                   premium_type=amo.ADDON_PREMIUM,
+                                   disabled_by_user=False)
+        now = datetime.now()
+        fa = FeaturedApp.objects.create(app=wa,
+                                        start_date=now - timedelta(days=1),
+                                        end_date=now + timedelta(days=1))
+        FeaturedAppRegion.objects.create(featured_app=fa,
+                                         region=mkt.regions.WORLDWIDE.id)
+        self.refresh()
+
+    def test_disable_paid_featured_apps(self):
+        eq_(list(Webapp.featured(region=mkt.regions.WORLDWIDE)), [])
+
+    def test_disable_paid_popular_apps(self):
+        eq_(list(Webapp.popular(region=mkt.regions.WORLDWIDE)), [])
+
+    def test_disable_paid_latest_apps(self):
+        eq_(list(Webapp.latest(region=mkt.regions.WORLDWIDE)), [])
+
+
 class TestManifest(BaseWebAppTest):
 
     def test_get_manifest_json(self):
@@ -335,6 +362,77 @@ class TestManifest(BaseWebAppTest):
         with open(self.manifest, 'r') as mf:
             manifest_json = json.load(mf)
             eq_(webapp.get_manifest_json(), manifest_json)
+
+
+class TestPackagedManifest(BasePackagedAppTest):
+
+    def _get_manifest_json(self):
+        zf = zipfile.ZipFile(self.package)
+        data = zf.open('manifest.webapp').read()
+        zf.close()
+        return json.loads(data)
+
+    def test_get_manifest_json(self):
+        webapp = self.post_addon()
+        eq_(webapp.status, amo.STATUS_NULL)
+        assert webapp.current_version
+        assert webapp.current_version.has_files
+        mf = self._get_manifest_json()
+        eq_(webapp.get_manifest_json(), mf)
+
+    def test_get_manifest_json_w_file(self):
+        webapp = self.post_addon()
+        eq_(webapp.status, amo.STATUS_NULL)
+        assert webapp.current_version
+        assert webapp.current_version.has_files
+        file_ = webapp.current_version.all_files[0]
+        mf = self._get_manifest_json()
+        eq_(webapp.get_manifest_json(file_), mf)
+
+    def test_get_manifest_json_multiple_versions(self):
+        # Post the real app/version, but backfill an older version.
+        webapp = self.post_addon()
+        webapp.update(status=amo.STATUS_PUBLIC, _current_version=None)
+        version = version_factory(addon=webapp, version='0.5',
+                                  created=self.days_ago(1))
+        version.files.update(created=self.days_ago(1))
+        webapp = Webapp.objects.get(pk=webapp.pk)
+        webapp.update_version()
+        assert webapp.current_version
+        assert webapp.current_version.has_files
+        mf = self._get_manifest_json()
+        eq_(webapp.get_manifest_json(), mf)
+
+    def test_cached_manifest_is_cached(self):
+        webapp = self.post_addon()
+        # First call does queries and caches results.
+        webapp.get_cached_manifest()
+        # Subsequent calls are cached.
+        with self.assertNumQueries(0):
+            webapp.get_cached_manifest()
+
+    def test_cached_manifest_contents(self):
+        webapp = self.post_addon()
+        version = webapp.current_version
+        file = version.all_files[0]
+        manifest = self._get_manifest_json()
+
+        data = json.loads(webapp.get_cached_manifest())
+        eq_(data['name'], webapp.name)
+        eq_(data['version'], webapp.current_version.version)
+        eq_(data['size'], file.size)
+        eq_(data['release_notes'], version.releasenotes)
+        eq_(data['package_path'], file.get_url_path('manifest'))
+        eq_(data['icons'], manifest['icons'])
+        eq_(data['locales'], manifest['locales'])
+
+    def test_package_path(self):
+        webapp = self.post_addon()
+        version = webapp.current_version
+        file = version.all_files[0]
+        res = self.client.get(file.get_url_path('manifest'))
+        eq_(res.status_code, 200)
+        eq_(res['content-type'], 'application/zip')
 
 
 class TestDomainFromURL(unittest.TestCase):
@@ -566,6 +664,24 @@ class TestIsVisible(amo.tests.WebappTestCase):
             else:
                 eq_(self.app.is_visible(self.request), False)
 
+    def test_non_game_regular_user(self):
+        # Public apps not categorized as a game should be visible.
+        cat, created = Category.objects.get_or_create(slug='education',
+                                                      type=amo.ADDON_WEBAPP)
+        AddonCategory.objects.get_or_create(addon=self.app, category=cat)
+        self.app = self.get_app()
+        self.set_request(user=self.regular)
+
+        for region in mkt.regions.ALL_REGIONS:
+            self.set_request(region=region)
+            for status in self.statuses:
+                self.app.update(status=status)
+                if status == amo.STATUS_PUBLIC:
+                    # Region (Brazil or other) doesn't matter for non-games.
+                    eq_(self.app.is_visible(self.request), True)
+                else:
+                    eq_(self.app.is_visible(self.request), False)
+
     def test_unrated_game_regular_user(self):
         # Only public+unrated games should be visible.
         self.make_game(rated=False)
@@ -784,3 +900,34 @@ class TestContentRatingsIn(amo.tests.WebappTestCase):
             eq_(self.app.content_ratings_in(region=region, category='games'),
                 [])
             eq_(self.app.content_ratings_in(region=region, category=cat), [])
+
+
+class TestQueue(amo.tests.WebappTestCase):
+
+    def test_in_queue(self):
+        assert not self.app.in_rereview_queue()
+        RereviewQueue.objects.create(addon=self.app)
+        assert self.app.in_rereview_queue()
+
+
+class TestPackagedSigning(amo.tests.WebappTestCase):
+
+    @mock.patch('lib.crypto.packaged.sign')
+    def test_not_packaged(self, sign):
+        self.app.update(is_packaged=False)
+        assert not self.app.sign_if_packaged(self.app.current_version.pk)
+        assert not sign.called
+
+    @mock.patch('lib.crypto.packaged.sign')
+    def test_packaged(self, sign):
+        self.app.update(is_packaged=True)
+        assert self.app.sign_if_packaged(self.app.current_version.pk)
+        eq_(sign.call_args[0][0], self.app.current_version.pk)
+
+    @mock.patch('lib.crypto.packaged.sign')
+    def test_packaged_reviewer(self, sign):
+        self.app.update(is_packaged=True)
+        assert self.app.sign_if_packaged(self.app.current_version.pk,
+                                         reviewer=True)
+        eq_(sign.call_args[0][0], self.app.current_version.pk)
+        eq_(sign.call_args[1]['reviewer'], True)

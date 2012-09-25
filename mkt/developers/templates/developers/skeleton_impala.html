@@ -1,6 +1,9 @@
 {% set logged = request.user.is_authenticated() %}
 <!DOCTYPE html>
-<html lang="{{ LANG }}" dir="{{ DIR }}">
+<html lang="{{ LANG }}" dir="{{ DIR }}"
+  {% if settings.USE_APPCACHE and OFFLINE_MANIFEST %}
+    {{ appcache_manifest_link()|safe }}
+  {% endif %}>
   <head>
     <meta charset="utf-8">
     {% if not settings.ENGAGE_ROBOTS %}
@@ -15,8 +18,6 @@
           href="{{ MEDIA_URL }}img/mkt/logos/64.png" sizes="64x64">
     <link rel="shortcut icon" type="image/x-icon"
           href="{{ MEDIA_URL }}img/mkt/logos/32.png" sizes="32x32">
-
-    <link href="{{ MEDIA_URL }}css/mkt/tabzilla.css" rel="stylesheet">
 
     {{ css('mkt/devreg') }}
 
@@ -37,37 +38,41 @@
 
     {% include 'mobile/head_debug.html' %}
 
-    {% if request.user.is_authenticated() %}
+    {% if logged %}
       <meta name="csrf" content="{{ csrf_token }}">
     {% endif %}
   </head>
-  <body class="html-{{ DIR }} {{ request.APP.short }} moz-header-slim {% block bodyclass %}{% endblock %}"
+  <body class="html-{{ DIR }} {{ request.APP.short }}
+               moz-header-slim {% block bodyclass %}{% endblock %}"
         data-app="{{ request.APP.short }}"
         data-appname="{{ request.APP.pretty }}"
         data-appid="{{ request.APP.id }}"
         data-user="{{ user_data(amo_user)|json }}"
         data-readonly="{{ settings.READ_ONLY|json }}"
         data-media-url="{{ MEDIA_URL }}"
+        data-login-url="{{ url('users.browserid_login') }}"
         data-collect-timings="{{ url('amo.timing.record') }}:{{ collect_timings_percent }}"
         {% block bodyattrs %}{% endblock %}>
     <section id="site-header">
       {% block site_header %}
         <div class="pad upper-header">
-          <div id="tabzilla-wrapper">
-            <a id="tabzilla" href="http://mozilla.org/">mozilla</a>
-          </div>
-          <nav id="aux-nav" role="navigation" class="menu-nav c">
-            <ul>
-              {% if not settings.READ_ONLY %}
-                {% include 'impala/user_login.html' %}
-              {% endif %}
-              {% block aux_nav %}{% endblock %}
-            </ul>
-          </nav>
+          {% block aux_nav_content %}
+            <nav id="aux-nav" role="navigation" class="menu-nav c">
+              <ul>
+                {% block user_actions %}
+                  {% if not settings.READ_ONLY %}
+                    {% include 'impala/user_login.html' %}
+                  {% endif %}
+                {% endblock %}
+                {% block aux_nav %}{% endblock %}
+              </ul>
+            </nav>
+          {% endblock %}
           {% block masthead %}
           <h1 class="logo"><a href="{{ url('ecosystem.landing') }}">
             {{ _('Firefox Marketplace Developers') }}</a></h1>
           {% endblock %}
+          {% block devhub_categories %}{% endblock %}
         </div>
         {% block site_header_title %}
           {% include 'developers/nav.html' %}
@@ -103,6 +108,7 @@
     <div id="tooltip">
       <span></span>
     </div>
+    {% block site_nav_footer %}{% endblock %}
     <footer id="footer" class="c">
       <div class="pad">
         <h1 id="footzilla">mozilla</h1>
@@ -126,17 +132,69 @@
         </ul>
       </div>
     </footer>
+
+    {% if not logged %}
+      <div id="login" class="overlay">
+        <section>
+          <div class="new">
+            <h2>{{ _('Please sign in') }}</h2>
+            <p>
+              {% trans url='https://persona.org/' %}
+                Just log in or register with your
+                <a href="{{ url }}">Persona</a> account below.
+              {% endtrans %}
+            </p>
+            <footer>
+              <a class="button browserid" href="#">{{ _('Log in / Register') }}</a>
+            </footer>
+          </div>
+          <div class="old">
+            <h2>Additional authorization required</h2>
+            <form method="post" action="{{ get_login_link() }}"
+                  class="form-grid">
+              <div class="simple-field row c">
+                <div class="form-label">
+                  <label for="id_username">Email address</label>
+                </div>
+                <div class="form-col">
+                  <input id="id_username" name="username" maxlength="50" type="email">
+                </div>
+              </div>
+              <div class="simple-field row c password">
+                <div class="form-label">
+                  <label for="id_password">Password</label>
+                </div>
+                <div class="form-col">
+                  <input name="password" id="id_password" type="password">
+                </div>
+              </div>
+              <input type="hidden" name="rememberme" value="1">
+              <footer class="listing-footer">
+                <button id="login-submit" type="submit">Log in</button>
+              </footer>
+            </form>
+          </div>
+        </section>
+      </div>
+    {% endif %}
+
+    {% block dbgoverlay %}{% endblock %}
+
     {# js #}
     {% block site_js %}
       <script src="{{ static(url('jsi18n')) }}"></script>
+      {% if not logged %}
+        {# We need Persona for only non-authenticated users. #}
+        <script async defer src="https://login.persona.org/include.js"></script>
+        <script type="text/javascript" src="{{ settings.RECAPTCHA_AJAX_URL }}"></script>
+      {% endif %}
       {{ js('mkt/devreg') }}
-      {% if logged %}
+      {% if logged and not waffle.switch('disabled-payments') and waffle.switch('enabled-paypal') %}
         <script async defer src="{{ settings.PAYPAL_JS_URL }}"></script>
       {% endif %}
     {% endblock %}
     {% block js %}{% endblock %}
     {# Webtrends Stats Tracking #}
-    <script defer async src="//www.mozilla.org/tabzilla/media/js/tabzilla.js"></script>
     <script defer src="{{ media('js/webtrends/webtrends-v0.1.js') }}"></script>
     {% block js_extras %}{% endblock %}
     <noscript>

@@ -117,8 +117,8 @@ def get_output(data):
                 iconUrl='http://fpdownload2.macromedia.com/pub/flashplayer/current/fp_win_installer.ico',
                 needsRestart='false',
                 InstallerShowsUI='true',
-                version='11.4.402.265',
-                InstallerHash='sha256:e098415d6ae44dfbb78248443648591cab2a6759015c1c126a1e9d5991a2a961',
+                version='11.4.402.278',
+                InstallerHash='sha256:004fb94b231498a5b630fb5f18e24d11d1672c0b5251d06f89cb1a48510a53fc',
                 InstallerLocation='http://download.macromedia.com/pub/flashplayer/pdc/fp_pl_pfs_installer.exe')
 
     elif (g['mimetype'] == 'application/x-director' and
@@ -139,8 +139,8 @@ def get_output(data):
         plugin.update(
             guid='{45f2a22c-4029-4209-8b3d-1421b989633f}',
             XPILocation='',
-            version='11.6.6.636',
-            InstallerHash='sha256:cff6852e0b2d179a38258d8df567d7660a9b1b5fea1aa38966067d230dda8382',
+            version='11.6.7.637',
+            InstallerHash='sha256:45ab3d52bde56bd2c2372fc48a1e2c0ec9a402d4c216fee67ed74f80de4b2012',
             InstallerLocation='http://fpdownload.macromedia.com/pub/shockwave/default/english/win95nt/latest/Shockwave_Installer_FF.exe',
             needsRestart='false',
             InstallerShowsUI='false')
@@ -218,7 +218,7 @@ def get_output(data):
 
         plugin.update(
             name='Java Runtime Environment',
-            version='1.7 u4',
+            version='1.7 u7',
             manualInstallationURL='http://java.com/downloads',
             InstallerShowsUI='false',
             needsRestart='false')
@@ -231,12 +231,12 @@ def get_output(data):
             plugin.update(
                 guid='{fbe640ef-4375-4f45-8d79-767d60bf75b8}',
                 InstallerLocation='http://java.com/firefoxjre_exe',
-                InstallerHash='sha1:fd67d63faa58945d875ec2f7666a43d79dedc3b1')
+                InstallerHash='sha1:661a55518096c1609b5e297d5173c0f61c9cb79f')
         elif g['clientOS'].startswith('Win'):
             plugin.update(
                 guid='{92a550f2-dfd2-4d2f-a35d-a98cfda73595}',
                 InstallerLocation='http://java.com/firefoxjre_exe',
-                InstallerHash='sha1:fd67d63faa58945d875ec2f7666a43d79dedc3b1',
+                InstallerHash='sha1:661a55518096c1609b5e297d5173c0f61c9cb79f',
                 XPILocation='http://java.com/jre-install.xpi')
         else:
             plugin.update(

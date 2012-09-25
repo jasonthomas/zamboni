@@ -1,7 +1,20 @@
 {% extends 'mkt/base.html' %}
 
+{% if category %}
+  {% set src = 'mkt-category' %}
+{% elif browse %}
+  {% set src = 'mkt-browse' %}
+{% else %}
+  {% set src = 'mkt-search' %}
+{% endif %}
+
 {% set query_term = query.q %}
 {% set search_url = request.get_full_path() %}
+{% if active['categories'] %}
+  {% set active_cat = active['categories'].text %}
+{% else %}
+  {% set active_cat = None %}
+{% endif %}
 
 {% block title %}{{ mkt_page_title(_('Search Results')) }}{% endblock %}
 
@@ -20,52 +33,95 @@
   {{ mkt_breadcrumbs(product, crumbs) }}
   <section id="filters">
     <header class="classic-header">
-      <a href="#" class="header-button icon home left dismiss"><b></b></a>
+      <a href="#" class="header-button icon back left dismiss"><b></b></a>
       <h1>{{ _('Filter') }}</h1>
     </header>
 
-    <div>
-      {% if prices %}
-        <h2>{{ _('Filter by price') }}</h2>
-        <ul class="toggles c" id="filter-prices">
-          {% for price in prices %}
-            <li>
-              <a{% if price.selected %} class="sel"{% endif %}
-                 href="{{ search_url|urlparams(page=None,
-                                               **price.urlparams) }}">
-                {{ price.text }}
-              </a>
-            </li>
-          {% endfor %}
-        </ul>
-      {% endif %}
+    {# This wrapper is completely unnecessary except for .force-mobile. #}
+    <div class="filters-body">
+      <form action="{{ url('search.search') }}" method="get">
+        <div>
+          {% if prices and not waffle.switch('disabled-payments') %}
+            <h2>{{ _('Filter by price') }}</h2>
+            <ul class="toggles c" id="filter-prices">
+              {% for price in prices %}
+                <li>
+                  <a{% if price.selected %} class="sel"{% endif %}
+                     href="{{ search_url|urlparams(page=None,
+                                                   **price.urlparams) }}">
+                    {{ price.text }}
+                  </a>
+                </li>
+              {% endfor %}
+            </ul>
+            <input type="hidden" name="price" value="">
+          {% endif %}
 
-      {% if categories %}
-        <h2>{{ _('Filter by category') }}</h2>
-        <ul class="toggles c" id="filter-categories">
-          {% for category in categories %}
-            <li>
-              <a {% if category.selected %} class="sel"{% endif %}
-                 href="{{ search_url|urlparams(page=None,
-                                               **category.urlparams) }}">
-                {{ category.text }}
-              </a>
-            </li>
-          {% endfor %}
-        </ul>
-      {% endif %}
+          {% if categories %}
+            <h2>{{ _('Filter by category') }}</h2>
+            <p class="picker">{{ active_cat or _('Any') }}</p>
+            <ul class="confirm-action c" id="filter-categories">
+              {% for category in categories %}
+                <li>
+                  <a class="button{% if category.selected %} sel{% endif %}"
+                     href="{{ search_url|urlparams(page=None,
+                                                   **category.urlparams) }}">
+                    {{ category.text }}
+                  </a>
+                </li>
+              {% endfor %}
+              <li><a href="#" class="button cancel">{{ _('Cancel') }}</a></li>
+            </ul>
+            <input type="hidden" name="cat" value="{{ query['cat'] }}">
+          {% endif %}
 
-      {# TODO: This needs to be implemented. #}
-      <h2>{{ _('Sort by') }}</h2>
-      <ul class="toggles c" id="filter-sort">
-        <li><a href="#">Relevancy</a></li>
-        <li><a href="#" class="sel">Rating</a></li>
-      </ul>
+          {# We're not iterating over all the sort options on purpose. #}
+          <h2>{{ _('Sort by') }}</h2>
+          <ul class="toggles two-col c" id="filter-sort">
+            {% if active_cat %}
+              <li class="popularity">
+                <a href="{{ search_url|urlparams(page=None,
+                                                 sort='popularity') }}">
+                  {{ _('Popularity') }}
+                </a>
+              </li>
+            {% else %}
+              <li class="relevancy">
+                <a href="{{ search_url|urlparams(page=None, sort='None') }}">
+                {{ _('Relevancy') }}</a>
+              </li>
+            {% endif %}
+            <li class="rating">
+              <a href="{{ search_url|urlparams(page=None, sort='rating') }}"
+                 class="sel">{{ _('Rating') }}</a>
+            </li>
+          </ul>
+          <input type="hidden" name="sort" value="{{ query['sort'] }}">
+
+          <div class="footer-action">
+            <a href="#" class="apply">{{ _('Apply') }}</a>
+          </div>
+        </div>
+      </form>
     </div>
   </section>
   <section id="search-results" class="full c">
-    {% with search_url=search_url %}
-      {% include 'search/results_inner.html' %}
-    {% endwith %}
+    {% if featured %}
+      <ol class="grid featured c">
+        {% for app in featured %}
+          <li>
+            {{ market_tile(app, src=src + '-featured') }}
+          </li>
+        {% endfor %}
+      </ol>
+    {% endif %}
+    {% if pager.object_list %}
+      <ol class="listing c" start="{{ pager.start_index() }}">
+        {{ search_results(pager.object_list, field=query.sort, src=src) }}
+      </ol>
+      {{ pager|impala_paginator }}
+    {% else %}
+      {{ no_results() }}
+    {% endif %}
   </section>
 {% endblock %}

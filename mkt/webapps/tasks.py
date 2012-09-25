@@ -10,9 +10,9 @@ import amo
 from amo.decorators import write
 from amo.helpers import absolutify
 from amo.urlresolvers import reverse
+from editors.models import RereviewQueue
 from files.models import FileUpload
 from mkt.developers.tasks import _fetch_manifest, validator
-from mkt.reviewers.models import RereviewQueue
 from mkt.webapps.models import Webapp
 from users.utils import get_task_user
 
@@ -135,3 +135,19 @@ def _update_manifest(id):
             old.get('name'), new.get('name'))
         _log(webapp, msg, rereview=True)
         RereviewQueue.flag(webapp, amo.LOG.REREVIEW_MANIFEST_CHANGE, msg)
+
+
+@task
+def update_cached_manifests(id, **kw):
+    try:
+        webapp = Webapp.objects.get(pk=id)
+    except Webapp.DoesNotExist:
+        _log(id, u'Webapp does not exist')
+        return
+
+    if not webapp.is_packaged:
+        return
+
+    # Rebuilds the packaged app mini manifest and stores it in cache.
+    webapp.get_cached_manifest(force=True)
+    _log(webapp, u'Updated cached mini manifest')

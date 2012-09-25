@@ -23,6 +23,7 @@ CSS = {
         'css/devreg/buttons.less',
 
         # Popups, Modals, Tooltips.
+        'css/mkt/overlay.less',
         'css/devreg/devhub-popups.less',
         'css/mkt/device.less',
         'css/devreg/tooltips.less',
@@ -42,7 +43,7 @@ CSS = {
         'css/devreg/prose.less',
         'css/devreg/authors.less',
         'css/devreg/in-app-config.less',
-        'css/devreg/paypal.less',
+        'css/devreg/payments.less',
         'css/devreg/refunds.less',
         'css/devreg/status.less',
 
@@ -56,10 +57,13 @@ CSS = {
         'css/devreg/submit-manifest.less',
         'css/devreg/submit-details.less',
         'css/devreg/validation.less',
-        'css/mkt/submit.less',
+        'css/devreg/submit.less',
+        'css/impala/personas.less',
+        'css/impala/colorpicker.less',
 
         # Developer Log In / Registration.
         'css/devreg/login.less',
+        'css/mkt/login.less',
 
         # Footer.
         'css/devreg/footer.less',
@@ -71,6 +75,8 @@ CSS = {
         'css/mkt/buttons.less',
         'css/mkt/ratings.less',
         'css/mkt/reviewers.less',
+        'css/mkt/themes_review.less',
+        'css/mkt/paginator.less',
     ),
     'mkt/consumer': (
         'css/mkt/reset.less',
@@ -110,21 +116,10 @@ CSS = {
     'mkt/ecosystem': (
         'css/mkt/reset.less',
         'css/mkt/typography.less',
-        'css/ecosystem/site.less',
-        'css/ecosystem/header.less',
-        'css/ecosystem/buttons.less',
+        'css/mkt/login.less',
+        'css/mkt/forms.less',
         'css/ecosystem/landing.less',
-        'css/mkt/overlay.less',
         'css/ecosystem/documentation.less',
-        'css/ecosystem/footer.less',
-    ),
-    'mkt/xtags': (
-        '//raw.github.com/mozilla/xtag-elements/master/alert-popup/alert-popup.css',
-        '//raw.github.com/mozilla/xtag-elements/master/dialog-toast/dialog-toast.css',
-        '//raw.github.com/mozilla/xtag-elements/master/list-view/listview.css',
-        '//raw.github.com/mozilla/xtag-elements/master/slidebox/slidebox.css',
-        '//raw.github.com/mozilla/xtag-elements/master/slider/slider.css',
-        '//raw.github.com/mozilla/xtag-elements/master/tabbox/tabbox.css',
     ),
     'mkt/in-app-payments': (
         'css/mkt/reset.less',
@@ -137,6 +132,7 @@ CSS = {
     ),
     'mkt/lookup': (
         'css/mkt/lookup-tool.less',
+        'css/mkt/activity.less',
     ),
     'mkt/themes': (
         'css/mkt/themes.less',
@@ -157,7 +153,11 @@ JS = {
         'js/lib/jquery.cookie.js',
         'js/zamboni/storage.js',
         'js/zamboni/tabs.js',
+        'js/common/keys.js',
         'js/impala/serializers.js',
+        'js/mkt/utils.js',
+        'js/mkt/browserid.js',
+        'js/mkt/login.js',
 
         # jQuery UI.
         'js/lib/jquery-ui/jquery.ui.core.js',
@@ -198,22 +198,25 @@ JS = {
 
         # New stuff.
         'js/devreg/devhub.js',
-        'js/devreg/submit-details.js',
+        'js/devreg/submit.js',
         'js/devreg/edit.js',
+        'js/impala/persona_creation.js',
+        'js/lib/jquery.minicolors.js',
 
         # Specific stuff for making payments nicer.
-        'js/devreg/paypal.js',
+        'js/devreg/payments.js',
         'js/zamboni/validator.js',
+        'js/mkt/overlay.js',
     ),
     'mkt/consumer': (
-        'js/lib/jquery-1.8-nofx.js',
+        'js/lib/jquery-1.8.js',
         'js/lib/webtrends.js',
         'js/lib/underscore.js',
         'js/lib/format.js',
 
         # slider lib
         'js/lib/flipsnap.js',
-
+        'js/mkt/offline.js',
         'js/common/tracking.js',
         'js/mkt/utils.js',
         'js/lib/csrf.js',
@@ -290,6 +293,7 @@ JS = {
         'js/mkt/stats/stats.js',
     ),
     'mkt/themes': (
+        'js/lib/jquery.hoverIntent.js',
         'js/zamboni/personas_core.js',
         'js/zamboni/personas.js',
         'js/mkt/themes.js',
@@ -307,14 +311,5 @@ JS = {
         'js/impala/ajaxcache.js',
         'js/impala/suggestions.js',
         'js/mkt/lookup-tool.js',
-    ),
-    'mkt/xtags': (
-        '//raw.github.com/mozilla/x-tag/master/x-tag.js',
-        '//raw.github.com/mozilla/xtag-elements/master/alert-popup/alert-popup.js',
-        '//raw.github.com/mozilla/xtag-elements/master/dialog-toast/dialog-toast.js',
-        '//raw.github.com/mozilla/xtag-elements/master/list-view/listview.js',
-        '//raw.github.com/mozilla/xtag-elements/master/slidebox/slidebox.js',
-        '//raw.github.com/mozilla/xtag-elements/master/slider/slider.js',
-        '//raw.github.com/mozilla/xtag-elements/master/tabbox/tabbox.js',
     ),
 }

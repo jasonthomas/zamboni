@@ -66,6 +66,10 @@
 @yellow: #ffe;
 @gold: darken(@yellow, 75%);
 @faint-blue: #ECF5FE;
+@blue: #258;
+@heavy: 400;
+@grain: #394C58;
+@bg-light-gray: #F8F8F8;
 
 // Used for content ratings for games in Brazil.
 // You can use them elsewhere when you want colourful boxes.
@@ -174,19 +178,19 @@
 }
 
 .box-shadow(@shadow) {
-    box-shadow: @shadow;
-    -moz-box-shadow: @shadow;
     -webkit-box-shadow: @shadow;
+    -moz-box-shadow: @shadow;
+    box-shadow: @shadow;
 }
 .box-shadow(@shadow, @shadow2) {
-    box-shadow: @shadow, @shadow2;
-    -moz-box-shadow: @shadow, @shadow2;
     -webkit-box-shadow: @shadow, @shadow2;
+    -moz-box-shadow: @shadow, @shadow2;
+    box-shadow: @shadow, @shadow2;
 }
 .box-shadow(@shadow, @shadow2, @shadow3) {
-    box-shadow: @shadow, @shadow2, @shadow3;
-    -moz-box-shadow: @shadow, @shadow2, @shadow3;
     -webkit-box-shadow: @shadow, @shadow2, @shadow3;
+    -moz-box-shadow: @shadow, @shadow2, @shadow3;
+    box-shadow: @shadow, @shadow2, @shadow3;
 }
 
 .text-columns(@count, @gap: 1em) {

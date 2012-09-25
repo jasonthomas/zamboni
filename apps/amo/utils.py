@@ -1,3 +1,4 @@
+import chardet
 import codecs
 import collections
 import contextlib
@@ -34,17 +35,17 @@ from django.utils import translation
 from django.utils.functional import Promise
 from django.utils.encoding import smart_str, smart_unicode
 
-from babel import Locale
 import bleach
 from cef import log_cef as _log_cef
-from easy_thumbnails import processors
 import elasticutils.contrib.django as elasticutils
 import html5lib
-from html5lib.serializer.htmlserializer import HTMLSerializer
-from jingo import env
 import jinja2
 import pyes.exceptions as pyes
 import pytz
+from babel import Locale
+from easy_thumbnails import processors
+from html5lib.serializer.htmlserializer import HTMLSerializer
+from jingo import env
 from PIL import Image, ImageFile, PngImagePlugin
 
 import amo.search
@@ -55,6 +56,8 @@ from users.models import UserNotification
 from users.utils import UnsubscribeCode
 
 from . import logger_log as log
+
+metlog = settings.METLOG
 
 
 def urlparams(url_, hash=None, **query):
@@ -478,8 +481,12 @@ class ImageCheck(object):
         try:
             self._img.seek(0)
             self.img = Image.open(self._img)
+            # PIL doesn't tell us what errors it will raise at this point,
+            # just "suitable ones", so let's catch them all.
+            self.img.verify()
             return True
-        except IOError:
+        except:
+            log.error('Error decoding image', exc_info=True)
             return False
 
     def is_animated(self, size=100000):
@@ -620,7 +627,7 @@ def cache_ns_key(namespace, increment=False):
             cache.set(ns_key, ns_val, 0)
     else:
         ns_val = cache.get(ns_key)
-        if ns_val == None:
+        if ns_val is None:
             ns_val = epoch(datetime.datetime.now())
             cache.set(ns_key, ns_val, 0)
     return '%s:%s' % (ns_val, ns_key)
@@ -779,12 +786,16 @@ def log_cef(name, severity, env, *args, **kwargs):
     # test runner.  Good luck with that.
     if isinstance(env, HttpRequest):
         r = env.META.copy()
+        if 'PATH_INFO' in r:
+            r['PATH_INFO'] = env.build_absolute_uri(r['PATH_INFO'])
     elif isinstance(env, dict):
         r = env
     else:
         r = {}
-
-    return _log_cef(name, severity, r, *args, config=c, **kwargs)
+    if settings.USE_METLOG_FOR_CEF:
+        return metlog.cef(name, severity, r, *args, config=c, **kwargs)
+    else:
+        return _log_cef(name, severity, r, *args, config=c, **kwargs)
 
 
 @contextlib.contextmanager
@@ -872,6 +883,21 @@ def strip_bom(data):
             data = data[len(bom):]
             break
     return data
+
+
+def smart_decode(s):
+    """Guess the encoding of a string and decode it."""
+    if isinstance(s, unicode):
+        return s
+    enc_guess = chardet.detect(s)
+    try:
+        return s.decode(enc_guess['encoding'])
+    except (UnicodeDecodeError, TypeError), exc:
+        msg = 'Error decoding string (encoding: %r %.2f%% sure): %s: %s'
+        log.error(msg % (enc_guess['encoding'],
+                         enc_guess['confidence'] * 100.0,
+                         exc.__class__.__name__, exc))
+        return unicode(s, errors='replace')
 
 
 def attach_trans_dict(model, addons):

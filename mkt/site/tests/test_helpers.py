@@ -1,20 +1,24 @@
 # -*- coding: utf-8 -*-
 import json
 
+from django.conf import settings
+
+import fudge
 import mock
 from nose.tools import eq_
 from pyquery import PyQuery as pq
 
-from addons.models import AddonCategory, Category
 import amo
 import amo.tests
+from addons.models import AddonCategory, Category
 from amo.helpers import urlparams
 from amo.urlresolvers import reverse
 from market.models import AddonPremium, AddonPurchase
 from users.models import UserProfile
 
+from mkt.site.helpers import (css, get_login_link, js, market_button,
+                              market_tile)
 from mkt.webapps.models import Webapp
-from mkt.site.helpers import market_button, market_tile
 
 
 class TestMarketButton(amo.tests.TestCase):
@@ -39,6 +43,8 @@ class TestMarketButton(amo.tests.TestCase):
 
     def test_is_webapp(self):
         doc = pq(market_tile(self.context, self.webapp))
+        eq_(doc('.price').text(), 'Free')
+
         data = json.loads(doc('.mkt-tile').attr('data-product'))
         eq_(data['manifestUrl'], self.webapp.manifest_url)
         eq_(data['recordUrl'], urlparams(self.webapp.get_detail_url('record'),
@@ -51,6 +57,8 @@ class TestMarketButton(amo.tests.TestCase):
     def test_is_premium_webapp(self):
         self.make_premium(self.webapp)
         doc = pq(market_tile(self.context, self.webapp))
+        eq_(doc('.price').text(), '$1.00')
+
         data = json.loads(doc('.mkt-tile').attr('data-product'))
         eq_(data['manifestUrl'], self.webapp.manifest_url)
         eq_(data['price'], 1.0)
@@ -72,6 +80,13 @@ class TestMarketButton(amo.tests.TestCase):
         doc = pq(market_tile(self.context, self.webapp))
         data = json.loads(doc('.mkt-tile').attr('data-product'))
         eq_(data['isPurchased'], True)
+
+    def test_is_premium_disabled(self):
+        self.make_premium(self.webapp)
+        self.create_switch(name='disabled-payments')
+        doc = pq(market_tile(self.context, self.webapp))
+        cls = doc('button').attr('class')
+        assert 'disable' in cls, 'Unexpected: %r' % cls
 
     def test_xss(self):
         nasty = '<script>'
@@ -123,15 +138,144 @@ class TestMarketButton(amo.tests.TestCase):
         eq_(data['categories'],
             [str(cat.name) for cat in self.webapp.categories.all()])
 
+    @mock.patch.object(settings, 'SITE_URL', 'http://omg.org/yes')
     def test_is_packaged(self):
-        self.webapp.current_version.files.all()[0].update(is_packaged=True)
+        self.webapp.update(is_packaged=True)
         doc = pq(market_tile(self.context, self.webapp))
         data = json.loads(doc('a').attr('data-product'))
         eq_(data['is_packaged'], True)
-        assert data['package_url'].startswith('/downloads')
+        eq_(data['manifestUrl'],
+            'http://omg.org/yes' + self.webapp.get_detail_url('manifest'))
 
     def test_is_not_packaged(self):
         doc = pq(market_tile(self.context, self.webapp))
         data = json.loads(doc('a').attr('data-product'))
         eq_(data['is_packaged'], False)
-        eq_(data['package_url'], '')
+        eq_(data['manifestUrl'], self.webapp.manifest_url)
+
+    def test_packaged_no_valid_status(self):
+        self.webapp.update(is_packaged=True)
+        version = self.webapp.versions.latest()
+        version.all_files[0].update(status=amo.STATUS_REJECTED)
+        self.webapp.update_version()  # Reset cached `_current_version`.
+
+        doc = pq(market_tile(self.context, self.webapp))
+        data = json.loads(doc('a').attr('data-product'))
+        eq_(data['is_packaged'], True)
+        eq_(data['manifestUrl'], '')
+        # The install button should not be shown if no current_version.
+        eq_(doc('.product button').length, 0)
+
+
+def test_login_link():
+    request = mock.Mock()
+    request.user = mock.Mock()
+    request.user.is_authenticated.return_value = False
+    request.GET = {}
+    eq_(reverse('users.login'), get_login_link({'request': request}))
+
+    request.GET = {'to': '/login'}
+    eq_(reverse('users.login'), get_login_link({'request': request}))
+
+    request.GET = {'to': 'foo'}
+    eq_(urlparams(reverse('users.login'), to='foo'),
+        get_login_link({'request': request}))
+    eq_(urlparams(reverse('users.login'), to='bar'),
+        get_login_link({'request': request}, 'bar'))
+
+    request.user.is_authenticated.return_value = True
+    eq_(get_login_link({'request': request}, to='foo'), 'foo')
+
+
+class TestCSS(amo.tests.TestCase):
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', True)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_dev_unminified(self, fake_css):
+        request = mock.Mock()
+        request.GET = {}
+        context = {'request': request}
+
+        # Should be called with `debug=True`.
+        fake_css.expects('css').with_args('mkt/consumer', False, True)
+        css(context, 'mkt/consumer')
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', False)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_prod_minified(self, fake_css):
+        request = mock.Mock()
+        request.GET = {}
+        context = {'request': request}
+
+        # Should be called with `debug=False`.
+        fake_css.expects('css').with_args('mkt/consumer', False, False)
+        css(context, 'mkt/consumer')
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', True)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_dev_unminified_overridden(self, fake_css):
+        request = mock.Mock()
+        request.GET = {'debug': 'true'}
+        context = {'request': request}
+
+        # Should be called with `debug=True`.
+        fake_css.expects('css').with_args('mkt/consumer', False, True)
+        css(context, 'mkt/consumer')
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', False)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_prod_unminified_overridden(self, fake_css):
+        request = mock.Mock()
+        request.GET = {'debug': 'true'}
+        context = {'request': request}
+
+        # Should be called with `debug=True`.
+        fake_css.expects('css').with_args('mkt/consumer', False, True)
+        css(context, 'mkt/consumer')
+
+
+class TestJS(amo.tests.TestCase):
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', True)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_dev_unminified(self, fake_js):
+        request = mock.Mock()
+        request.GET = {}
+        context = {'request': request}
+
+        # Should be called with `debug=True`.
+        fake_js.expects('js').with_args('mkt/consumer', True, False, False)
+        js(context, 'mkt/consumer')
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', False)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_prod_minified(self, fake_js):
+        request = mock.Mock()
+        request.GET = {}
+        context = {'request': request}
+
+        # Should be called with `debug=False`.
+        fake_js.expects('js').with_args('mkt/consumer', False, False, False)
+        js(context, 'mkt/consumer')
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', True)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_dev_unminified_overridden(self, fake_js):
+        request = mock.Mock()
+        request.GET = {'debug': 'true'}
+        context = {'request': request}
+
+        # Should be called with `debug=True`.
+        fake_js.expects('js').with_args('mkt/consumer', True, False, False)
+        js(context, 'mkt/consumer')
+
+    @mock.patch.object(settings, 'TEMPLATE_DEBUG', False)
+    @fudge.patch('mkt.site.helpers.jingo_minify_helpers')
+    def test_prod_unminified_overridden(self, fake_js):
+        request = mock.Mock()
+        request.GET = {'debug': 'true'}
+        context = {'request': request}
+
+        # Should be called with `debug=True`.
+        fake_js.expects('js').with_args('mkt/consumer', True, False, False)
+        js(context, 'mkt/consumer')

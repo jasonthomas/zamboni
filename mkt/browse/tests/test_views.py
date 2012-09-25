@@ -38,6 +38,7 @@ class BrowseBase(amo.tests.ESTestCase):
         # Feature in the US region.
         FeaturedAppRegion.objects.create(featured_app=f,
                                          region=mkt.regions.US.id)
+        return f
 
     def setup_featured(self):
         self.skip_if_disabled(settings.REGION_STORES)
@@ -162,6 +163,17 @@ class TestIndexLanding(BrowseBase):
         raise SkipTest
         self._test_featured_region_exclusions()
 
+    def test_featured_src(self):
+        _, _, featured = self.setup_featured()
+
+        r = self.client.get(self.url)
+        doc = pq(r.content)
+
+        eq_(doc('.featured .mkt-tile').attr('href'),
+            featured.get_detail_url() + '?src=mkt-browse-featured')
+        eq_(doc('.listing .mkt-tile').attr('href'),
+            self.webapp.get_detail_url() + '?src=mkt-browse')
+
     def test_popular(self):
         self._test_popular()
 
@@ -257,7 +269,6 @@ class TestCategoryLanding(BrowseBase):
 
     def test_featured(self):
         # TODO(dspasovski): Fix this.
-        raise SkipTest
         a, b, c = self.setup_featured()
 
         # Check that these apps are featured for this category -
@@ -269,6 +280,21 @@ class TestCategoryLanding(BrowseBase):
         # Check that these apps are not featured for another category.
         new_cat_url = reverse('browse.apps', args=[self.get_new_cat().slug])
         eq_(self.get_pks('featured', new_cat_url), [])
+
+    def test_featured_src(self):
+        a, b, _ = self.setup_featured()
+
+        r = self.client.get(self.url)
+        doc = pq(r.content)
+
+        featured_tiles = doc('.featured .mkt-tile')
+        eq_(featured_tiles.eq(0).attr('href'),
+            a.get_detail_url() + '?src=mkt-category-featured')
+        eq_(featured_tiles.eq(1).attr('href'),
+            b.get_detail_url() + '?src=mkt-category-featured')
+
+        eq_(doc('.listing .mkt-tile').attr('href'),
+            self.webapp.get_detail_url() + '?src=mkt-category')
 
     def test_popular(self):
         a = self.setup_popular()

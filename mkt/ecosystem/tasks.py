@@ -1,13 +1,12 @@
 from datetime import datetime
 import urllib2
 
-from django.core.cache import cache
-from django.core.exceptions import ObjectDoesNotExist
 from django.http import Http404
 
 import bleach
 from celeryutils import task
 import commonware.log
+from pyquery import PyQuery as pq
 
 from models import MdnCache
 
@@ -62,14 +61,24 @@ tutorials = [
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/FAQs/About_app_manifests?raw=1&macros=true'
     },
     {
+        'title': 'Firefox OS',
+        'name': 'firefox_os',
+        'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Mozilla/Boot_to_Gecko?raw=1&macros=true'
+    },
+    {
         'title': 'General',
         'name': 'tutorial_general',
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Tutorials/General?raw=1&macros=true'
     },
     {
-        'title': 'Weather App',
+        'title': 'App Templates Tutorial',
         'name': 'tutorial_weather',
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Tutorials/Weather_app_tutorial?raw=1&macros=true'
+    },
+    {
+        'title': 'Serpent Game',
+        'name': 'tutorial_serpent',
+        'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Tutorials/Games/Serpent_game?raw=1&macros=true'
     },
     {
         'title': 'Marketplace Submission',
@@ -82,23 +91,18 @@ tutorials = [
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Tutorials/General/Publishing_the_app?raw=1&macros=true'
     },
     {
-        'title': 'Design Guidelines',
-        'name': 'design_guidelines',
-        'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Design_Guidelines?raw=1&macros=true'
-    },
-    {
         'title': 'Design Principles',
-        'name': 'design_principles',
+        'name': 'principles',
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Design_Guidelines/Design_Principles?raw=1&macros=true'
     },
     {
         'title': 'Purpose of your App',
-        'name': 'purpose_of_your_app',
+        'name': 'purpose',
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Design_Guidelines/Purpose_of_your_app?raw=1&macros=true'
     },
     {
         'title': 'Design Patterns',
-        'name': 'design_patterns',
+        'name': 'patterns',
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Design_Guidelines/Intro_to_responsive_design?raw=1&macros=true'
     },
     {
@@ -107,10 +111,20 @@ tutorials = [
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/Design_Guidelines/References?raw=1&macros=true'
     },
     {
-        'title': 'Templates',
+        'title': 'Dev Tools',
+        'name': 'devtools',
+        'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/marketplace/App_developer_tools?raw=1&macros=true'
+    },
+    {
+        'title': 'App Templates',
         'name': 'templates',
         'mdn': 'https://developer.mozilla.org/%(locale)s/docs/Apps/App_templates?raw=1&macros=true'
     },
+    {
+        'title': 'Custom Elements',
+        'name': 'custom_elements',
+        'mdn': 'https://developer.mozilla.org/en-US/docs/Apps/Custom_Elements?raw=1&macros=true'
+    }
 ]
 
 # Instead of duplicating the tutorials entry above for each possible
@@ -164,8 +178,36 @@ def _update_mdn_items(items):
 
 
 def _fetch_mdn_page(url):
-    return bleach.clean(_get_page(url), attributes=ALLOWED_ATTRIBUTES,
+    data = bleach.clean(_get_page(url), attributes=ALLOWED_ATTRIBUTES,
                         tags=ALLOWED_TAGS, strip_comments=False)
+
+    root = pq(data)
+    anchors = root.find('a')
+    images = root.find('img')
+
+    if anchors:
+        # We only want anchors that have an href attribute available.
+        external_links = anchors.filter(lambda i: pq(this).attr('href'))
+        external_links.each(lambda e: e.attr('target', '_blank'))
+        # PyQuery doesn't like the idea of filtering like
+        # external_links.filter('a[href^="/"'), so we'll just do as they
+        # suggest for now.
+        mdn_links = external_links.filter(
+            lambda i: str(pq(this).attr('href')).startswith('/')
+        )
+        mdn_links.each(lambda e: e.attr(
+            'href', 'https://developer.mozilla.org%s' % e.attr('href'))
+        )
+
+    if images:
+        image_links = images.filter(
+            lambda i: str(pq(this).attr('src')).startswith('/')
+        )
+        image_links.each(lambda e: e.attr(
+            'src', 'https://developer.mozilla.org%s' % e.attr('src'))
+        )
+
+    return str(root)
 
 
 def _get_page(url):

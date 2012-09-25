@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import hashlib
 import json
 
 from django.conf import settings
@@ -95,6 +96,12 @@ class TestDetail(DetailBase):
         doc = self.get_pq()
         eq_(doc('.product.premium.button').length, 1)
 
+    def test_disabled_payments_notice(self):
+        self.create_switch('disabled-payments')
+        self.make_premium(self.app)
+        doc = self.get_pq()
+        eq_(doc('.no-payments.notification-box').length, 1)
+
     def dev_receipt_url(self):
         return urlparams(reverse('receipt.issue',
                                  args=[self.app.app_slug]), src='')
@@ -180,8 +187,7 @@ class TestDetail(DetailBase):
     def test_upsell(self):
         eq_(self.get_pq()('#upsell').length, 0)
         premie = amo.tests.app_factory(manifest_url='http://omg.org/yes')
-        AddonUpsell.objects.create(free=self.app, premium=premie,
-                                   text='XXX')
+        AddonUpsell.objects.create(free=self.app, premium=premie)
         upsell = self.get_pq()('#upsell')
         eq_(upsell.length, 1)
         eq_(upsell.find('.name').text(), unicode(premie.name))
@@ -364,7 +370,7 @@ class TestDetailPagePermissions(DetailBase):
     def test_public(self):
         doc = self.get_pq(status=amo.STATUS_PUBLIC)
         eq_(doc('#product-status').length, 0)
-        eq_(doc('.actions').length, 1, 'The rest of the page should visible')
+        eq_(doc('.summary').length, 1, 'The rest of the page should visible')
 
     def test_deleted(self):
         self.app.update(status=amo.STATUS_DELETED)
@@ -790,3 +796,85 @@ class TestActivity(amo.tests.TestCase):
         doc = pq(res.content)
         assert 'created' in doc('li.item').eq(0).text()
         assert 'edited' in doc('li.item').eq(1).text()
+
+
+class TestPackagedManifest(DetailBase):
+    fixtures = ['base/users', 'webapps/337141-steamcube']
+
+    def setUp(self):
+        self.app = Webapp.objects.get(pk=337141)
+        self.app.update(is_packaged=True)
+        self.url = self.app.get_detail_url('manifest')
+
+    def _mocked_json(self):
+        data = {
+            u'name': u'Packaged App √',
+            u'version': u'1.0',
+            u'size': 123456,
+            u'release_notes': u'Bug fixes',
+            u'packaged_path': u'/path/to/file.zip',
+        }
+        return json.dumps(data)
+
+    def login_as_reviewer(self):
+        self.client.logout()
+        assert self.client.login(username='editor@mozilla.com',
+                                 password='password')
+
+    def login_as_author(self):
+        self.client.logout()
+        user = UserProfile.objects.get(username='regularuser')
+        AddonUser.objects.create(addon=self.app, user=user)
+        assert self.client.login(username=user.email, password='password')
+
+    def test_non_packaged(self):
+        self.app.update(is_packaged=False)
+        res = self.client.get(self.url)
+        eq_(res.status_code, 404)
+
+    def test_disabled_by_user(self):
+        self.app.update(disabled_by_user=True)
+        res = self.client.get(self.url)
+        eq_(res.status_code, 404)
+
+    @mock.patch('mkt.webapps.models.Webapp.get_cached_manifest')
+    def test_app_public(self, _mock):
+        _mock.return_value = self._mocked_json()
+        res = self.client.get(self.url)
+        eq_(res.content, self._mocked_json())
+        eq_(res['Content-Type'], 'application/x-web-app-manifest+json')
+        eq_(res['ETag'], hashlib.md5(self._mocked_json()).hexdigest())
+
+    @mock.patch('mkt.webapps.models.Webapp.get_cached_manifest')
+    def test_conditional_get(self, _mock):
+        _mock.return_value = self._mocked_json()
+        etag = hashlib.md5(self._mocked_json()).hexdigest()
+        self.client.defaults['HTTP_IF_NONE_MATCH'] = '"%s"' % etag
+        res = self.client.get(self.url)
+        eq_(res.content, '')
+        eq_(res.status_code, 304)
+
+    def test_app_pending(self):
+        self.app.update(status=amo.STATUS_PENDING)
+        res = self.client.get(self.url)
+        eq_(res.status_code, 404)
+
+    @mock.patch('mkt.webapps.models.Webapp.get_cached_manifest')
+    def test_app_pending_reviewer(self, _mock):
+        self.login_as_reviewer()
+        self.app.update(status=amo.STATUS_PENDING)
+        _mock.return_value = self._mocked_json()
+        res = self.client.get(self.url)
+        eq_(res.content, self._mocked_json())
+        eq_(res['Content-Type'], 'application/x-web-app-manifest+json')
+        eq_(res['ETag'], hashlib.md5(self._mocked_json()).hexdigest())
+
+    @mock.patch('mkt.webapps.models.Webapp.get_cached_manifest')
+    def test_app_pending_author(self, _mock):
+        self.login_as_author()
+        self.app.update(status=amo.STATUS_PENDING)
+        _mock.return_value = self._mocked_json()
+        res = self.client.get(self.url)
+        eq_(res.content, self._mocked_json())
+        eq_(res['Content-Type'], 'application/x-web-app-manifest+json')
+        eq_(res['ETag'], hashlib.md5(self._mocked_json()).hexdigest())

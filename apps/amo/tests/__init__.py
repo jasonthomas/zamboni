@@ -27,7 +27,6 @@ from waffle.models import Flag, Sample, Switch
 
 import addons.search
 import amo
-import mkt.stats.search
 import stats.search
 from access.models import Group, GroupUser
 from addons.models import Addon, AddonCategory, Category, Persona
@@ -37,7 +36,6 @@ from bandwagon.models import Collection
 from files.helpers import copyfileobj
 from files.models import File, Platform
 from market.models import AddonPremium, Price, PriceCurrency
-from translations.models import Translation
 from versions.models import ApplicationsVersions, Version
 
 import mkt
@@ -182,20 +180,23 @@ class TestClient(Client):
             raise AttributeError
 
 
+ES_patchers = [mock.patch('elasticutils.get_es', spec=True),
+               mock.patch('elasticutils.contrib.django', spec=True)]
+
+
 def mock_es(f):
     """
     Test decorator for mocking elasticsearch calls in ESTestCase if we don't
     care about ES results.
     """
     @wraps(f)
-    @mock.patch('elasticutils.contrib.django', spec=True, new=mock.Mock)
     def decorated(request, *args, **kwargs):
-        return f(request, *args, **kwargs)
+        [p.start() for p in ES_patchers]
+        try:
+            return f(request, *args, **kwargs)
+        finally:
+            [p.stop() for p in ES_patchers]
     return decorated
-
-
-ES_patchers = [mock.patch('elasticutils.get_es', spec=True),
-               mock.patch('elasticutils.contrib.django', spec=True)]
 
 
 class TestCase(RedisTest, test_utils.TestCase):
@@ -281,7 +282,7 @@ class TestCase(RedisTest, test_utils.TestCase):
     def assertLoginRedirects(self, response, to, status_code=302):
         # Not using urlparams, because that escapes the variables, which
         # is good, but bad for assertRedirects which will fail.
-        self.assertRedirects(response,
+        self.assert3xx(response,
             '%s?to=%s' % (reverse('users.login'), to), status_code)
 
     def assert3xx(self, response, expected_url, status_code=302,
@@ -348,15 +349,21 @@ class TestCase(RedisTest, test_utils.TestCase):
         addon.update(premium_type=amo.ADDON_PREMIUM)
         AddonPremium.objects.create(addon=addon, price=price)
 
-    def create_sample(self, **kw):
+    def create_sample(self, name=None, **kw):
+        if name is not None:
+            kw['name'] = name
         kw.setdefault('percent', 100)
         Sample.objects.create(**kw)
 
-    def create_switch(self, **kw):
+    def create_switch(self, name=None, **kw):
+        if name is not None:
+            kw['name'] = name
         kw.setdefault('active', True)
         Switch.objects.create(**kw)
 
-    def create_flag(self, **kw):
+    def create_flag(self, name=None, **kw):
+        if name is not None:
+            kw['name'] = name
         kw.setdefault('everyone', True)
         Flag.objects.create(**kw)
 
@@ -369,6 +376,9 @@ class TestCase(RedisTest, test_utils.TestCase):
         """Creates group with rule, and adds user to group."""
         group = Group.objects.create(name='Test Group', rules=rules)
         GroupUser.objects.create(group=group, user=user_obj)
+
+    def days_ago(self, days):
+        return datetime.now() - timedelta(days=days)
 
 
 class AMOPaths(object):
@@ -447,6 +457,26 @@ def app_factory(**kw):
     return amo.tests.addon_factory(**kw)
 
 
+def _get_created(created):
+    """
+    Returns a datetime.
+
+    If `created` is "now", it returns `datetime.datetime.now()`. If `created`
+    is set use that. Otherwise generate a random datetime in the year 2011.
+    """
+    if created == 'now':
+        return datetime.now()
+    elif created:
+        return created
+    else:
+        return datetime(2011,
+                        random.randint(1, 12),  # Month
+                        random.randint(1, 28),  # Day
+                        random.randint(0, 23),  # Hour
+                        random.randint(0, 59),  # Minute
+                        random.randint(0, 59))  # Seconds
+
+
 def addon_factory(version_kw={}, file_kw={}, **kw):
     type_ = kw.pop('type', amo.ADDON_EXTENSION)
     popularity = kw.pop('popularity', None)
@@ -462,8 +492,7 @@ def addon_factory(version_kw={}, file_kw={}, **kw):
     a.bayesian_rating = random.uniform(1, 5)
     a.average_daily_users = popularity or random.randint(200, 2000)
     a.weekly_downloads = popularity or random.randint(200, 2000)
-    a.created = a.last_updated = datetime(2011, 6, 6, random.randint(0, 23),
-                                          random.randint(0, 59))
+    a.created = a.last_updated = _get_created(kw.pop('created', None))
     version_factory(file_kw, addon=a, **version_kw)  # Save 2.
     a.update_version()
     a.status = amo.STATUS_PUBLIC
@@ -482,6 +511,8 @@ def version_factory(file_kw={}, **kw):
     max_app_version = kw.pop('max_app_version', '5.0')
     version = kw.pop('version', '%.1f' % random.uniform(0, 2))
     v = Version.objects.create(version=version, **kw)
+    v.created = v.last_updated = _get_created(kw.pop('created', 'now'))
+    v.save()
     if kw.get('addon').type not in (amo.ADDON_PERSONA, amo.ADDON_WEBAPP):
         a, _ = Application.objects.get_or_create(id=amo.FIREFOX.id)
         av_min, _ = AppVersion.objects.get_or_create(application=a,
@@ -560,22 +591,14 @@ class ESTestCase(TestCase):
 
         addons.search.setup_mapping()
         stats.search.setup_indexes()
-        mkt.stats.search.setup_mkt_indexes()
+        if settings.MARKETPLACE:
+            import mkt.stats.search
+            mkt.stats.search.setup_mkt_indexes()
 
     @classmethod
     def setUpIndex(cls):
         cls.add_addons()
         cls.refresh()
-
-    @classmethod
-    def tearDownClass(cls):
-        # Delete everything in reverse-order of the foreign key dependencies.
-        models = (Platform, Category, File, ApplicationsVersions,
-                  Version, Translation, Addon, Collection, AppVersion,
-                  Application)
-        for model in models:
-            model.objects.all().delete()
-        super(ESTestCase, cls).tearDownClass()
 
     @classmethod
     def refresh(cls, index='default', timesleep=0):

@@ -1,9 +1,11 @@
-from django.conf.urls.defaults import include, patterns, url
+from django.conf.urls import include, patterns, url
 
 from lib.misc.urlconf_decorator import decorate
 
+from addons.urls import ADDON_ID
 import amo
 from amo.decorators import write
+from devhub import views as devhub_views
 from . import views
 
 
@@ -11,16 +13,6 @@ from . import views
 submit_apps_patterns = patterns('',
     url('^details/%s$' % amo.APP_SLUG, views.details,
         name='submit.app.details'),
-    url('^payments/%s$' % amo.APP_SLUG, views.payments,
-        name='submit.app.payments'),
-    url('^payments/upsell/%s$' % amo.APP_SLUG, views.payments_upsell,
-        name='submit.app.payments.upsell'),
-    url('^payments/paypal/%s$' % amo.APP_SLUG, views.payments_paypal,
-        name='submit.app.payments.paypal'),
-    url('^payments/bounce/%s$' % amo.APP_SLUG, views.payments_bounce,
-        name='submit.app.payments.bounce'),
-    url('^payments/confirm/%s$' % amo.APP_SLUG, views.payments_confirm,
-        name='submit.app.payments.confirm'),
     url('^done/%s$' % amo.APP_SLUG, views.done, name='submit.app.done'),
     url('^resume/%s$' % amo.APP_SLUG, views.resume, name='submit.app.resume'),
 )
@@ -28,11 +20,19 @@ submit_apps_patterns = patterns('',
 
 # Decorate all the views as @write so as to bypass cache.
 urlpatterns = decorate(write, patterns('',
+    url('^theme$', views.submit_theme, name='submit.theme'),
+    url('^theme/upload/'
+        '(?P<upload_type>persona_header|persona_footer)$',
+        devhub_views.ajax_upload_image, name='submit.theme.upload'),
+    url('^theme/%s$' % ADDON_ID, views.submit_theme_done,
+        name='submit.theme.done'),
+
     # App submission.
-    url('^$', views.submit, name='submit.app'),
-    url('^terms$', views.terms, name='submit.app.terms'),
-    url('^choose$', views.choose, name='submit.app.choose'),
-    url('^manifest$', views.manifest, name='submit.app.manifest'),
-    url('^package$', views.package, name='submit.app.package'),
-    ('', include(submit_apps_patterns)),
+    url('^app$', views.submit, name='submit.app'),
+    url('^app/proceed$', views.proceed, name='submit.app.proceed'),
+    url('^app/terms$', views.terms, name='submit.app.terms'),
+    url('^app/choose$', views.choose, name='submit.app.choose'),
+    url('^app/manifest$', views.manifest, name='submit.app.manifest'),
+    url('^app/package$', views.package, name='submit.app.package'),
+    ('^app/', include(submit_apps_patterns)),
 ))

@@ -2,15 +2,21 @@ var z = {
     body: $(document.body),
     page: $('#container'),
     prefix: (function() {
-        var s = window.getComputedStyle(document.body, '');
-        return (Array.prototype.slice.call(s).join('').match(/moz|webkit|ms|khtml/)||(s.OLink===''&&['o']))[0];
+        try {
+            var s = window.getComputedStyle(document.body, '');
+            return (Array.prototype.slice.call(s).join('').match(/moz|webkit|ms|khtml/)||(s.OLink===''&&['o']))[0];
+        } catch (e) {
+            return 'moz';
+        }
     })(),
     prefixed: function(property) {
         if (!z.prefix) return property;
         return '-' + z.prefix + '-' + property;
     },
     canInstallApps: true,
-    allowAnonInstalls: !!$('body').data('allow-anon-installs')
+    allowAnonInstalls: !!$('body').data('allow-anon-installs'),
+    // if ($('#myDialog li').length > z.confirmBreakNum) add class 'two-col'.
+    confirmBreakNum: 6
 };
 
 z.prefixUpper = z.prefix[0].toUpperCase() + z.prefix.substr(1);
@@ -63,6 +69,8 @@ $(document).ready(function() {
 
 
 z.page.on('fragmentloaded', function() {
+    var badPlatform = '<div class="bad-platform">' + gettext('This app is unavailable for your platform.') + '</div>';
+
     if (z.capabilities.webApps) {
         // Get list of installed apps and mark as such.
         r = window.navigator.mozApps.getInstalled();
@@ -75,12 +83,19 @@ z.page.on('fragmentloaded', function() {
                                   {'manifestUrl': val.manifestURL});
             });
         };
+        if (!z.capabilities.gaia) {
+            // Only Firefox OS currently supports packaged apps.
+            // (The 'bad' class ensures we append the message only once.)
+            $('.listing .product[data-is_packaged="true"]').addClass('disabled')
+                .closest('.mkt-tile:not(.bad)').addClass('bad').append(badPlatform);
+        }
     } else {
         z.apps = {};
     }
 
     if (!z.canInstallApps) {
         $(window).trigger('app_install_disabled');
+        $('.listing .mkt-tile:not(.bad)').addClass('bad').append(badPlatform);
     }
 
     // Navigation toggle.
@@ -93,12 +108,6 @@ z.page.on('fragmentloaded', function() {
     })).on('click', '.region', _pd(function() {
         $outer.animate({scrollTop: $outer.height()}, 1000);
     }));
-
-    // $header.on('focus.search', '#search-q', function() {
-    //     $('#search-go').show();
-    // }).blur('blur.search', '#search-q', function() {
-    //     $('#search-go').hide();
-    // });
 
     $(window).bind('overlay_dismissed', function() {
        $nav.removeClass('active');
@@ -132,15 +141,37 @@ z.page.on('fragmentloaded', function() {
             // Dismiss looks like back but actually just dismisses an overlay.
             $('#filters').hide();
         } else if ($this.hasClass('filter')) {
+            // Yea...
+            var sortoption = z.getVars(location.href);
+
+            // This will not scale if we have more than two.
+            $('#filter-sort li a').removeClass('sel');
+            switch(sortoption.sort) {
+                case 'None':
+                    $('#filter-sort li.relevancy a').addClass('sel');
+                    break;
+                case 'popularity':
+                    $('#filter-sort li.popularity a').addClass('sel');
+                    break;
+                case 'rating':
+                    $('#filter-sort li.rating a').addClass('sel');
+
+            }
             $('#filters').show();
         } else if ($this.hasClass('search')) {
             z.body.addClass('show-search');
             $btns.blur();
+            $('#search-q').focus();
         } else if ($this.hasClass('cancel')) {
             z.body.removeClass('show-search');
             $('#search-q').blur();
             $btns.blur();
         }
+
+        z.page.on('fragmentloaded', function() {
+            z.body.removeClass('show-search');
+            $('#search-q').blur();
+        });
         e.preventDefault();
     });
 

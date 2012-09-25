@@ -1,111 +1,248 @@
 @import '../mkt/lib';
 
-.design-wrapper {
+@devhub-box-shadow: #bbb 0 2px 3px;
+@text-indent-white: #fff 0 1px 1px;
+
+.doc-wrapper, .upper-header {
     margin: 0 auto;
-    position: relative;
     width: 960px;
 }
 
-.secondary-landing nav.design {
-    float: left;
-    margin-bottom: 40px;
-    padding-right: 20px;
-    width: 205px;
-    ol, ul {
-        padding-left: 10px;
+#site-header {
+    .logo {
+        width: 400px;
     }
-    ol {
-        > li {
-            > a {
-                display: block;
-                font-size: 13px;
-                font-weight: normal;
-            }
-        }
-    }
+}
+
+#site-nav .menu-nav {
+    float: right;
+    width: 600px;
+}
+
+#site-nav.devhub-categories {
+    background: inherit;
+    border: 0;
+    position: absolute;
+    bottom: -10px;
+    right: 0;
+    z-index: 1;
+
     ul {
-        > li {
-            color: @dark-gray;
-            font-size: 15px;
-            > a, > span {
-                background-color: #f4f4f4;
-                color: @dark-gray;
+        float: right;
+        margin: 0 auto;
+        padding: 0;
+
+        li {
+            border-left: 0;
+            margin-right: 3px;
+            padding: 0;
+            width: 170px;
+            z-index: 1;
+
+            > a {
+                background: @grain-src;
+                .border-radius(10px 10px 0 0);
                 display: block;
-                font-size: 15px;
-                font-weight: normal;
-                margin-bottom: 2px;
-                padding: 5px;
-                width: 100%;
+                color: @faint-gray;
+                font-size: 18px;
+                font-weight: @heavy;
+                line-height: 25px;
+                overflow: hidden;
+                padding: 5px 10px;
+                text-align: center;
+                text-overflow: ellipsis;
+                text-shadow: @dark-gray 1px 1px 2px;
+                text-transform: none;
+                white-space: nowrap;
+
+                &:hover, &.selected {
+                    background: @bg-light-gray @grain-src;
+                    color: @dark-gray;
+                    text-decoration: none;
+                    text-shadow: @text-indent-white;
+                }
             }
         }
     }
 }
 
-.secondary-landing article {
-    float: left;
-    margin: 25px 0 20px 20px;
-    width: 660px;
+#aux-nav {
+    position: absolute;
+    right: 0;
 
-    h1 {
+    li ul {
         margin-top: 0;
     }
+}
 
-    h2 {
-        font-size: 26px;
+#document-navigation {
+    background-color: #e0e3e5;
+    .border-radius(10px 0 0 10px);
+    .box-shadow(@devhub-box-shadow);
+    float: left;
+    padding: 5px 20px;
+    width: 170px;
+
+    ul {
+        margin: 5px 0;
+        padding: 0;
+
+        li > h2 {
+            border-bottom: 1px solid #d2d6d9;
+            color: @medium-gray;
+            font-size: 18px;
+            font-weight: 100;
+            line-height: 24px;
+            margin: 0;
+            padding: 10px 0 3px;
+            text-shadow: @text-indent-white;
+            text-transform: none;
+        }
+    }
+
+    ol {
+        border-top: 1px solid #edeff1;
+        margin: 0;
+        padding: 5px 0 0;
+
+        li {
+            font-size: 12px;
+            line-height: 14px;
+        }
+
+        a {
+            color: @medium-gray;
+            display: block;
+            font-weight: @heavy;
+            margin-bottom: 1px;
+            overflow: hidden;
+            padding: 4px 3px;
+            text-overflow: ellipsis;
+
+            &:hover, &.selected {
+                background-color: @bg-light-gray;
+                color: @dark-gray;
+            }
+        }
+    }
+}
+
+#page article {
+    background-color: #fff;
+    .box-shadow(@devhub-box-shadow);
+    color: @dark-gray;
+    float: left;
+    font-size: 13px;
+    font-weight: @heavy;
+    line-height: 18px;
+    padding: 30px;
+    width: 685px;
+
+    ol, ul {
+        list-style-type: disc;
+        padding: 0 30px;
+    }
+
+    h1 {
+        color: @dark-gray;
+        font-weight: 100;
+    }
+
+    h2, h3 {
+        font-weight: 100;
+    }
+
+    h2, h3, dt {
+        color: @medium-gray;
         margin: 30px 0 10px;
     }
 
-    &.marketing-block {
-        padding-top: 0px;
+    h3 {
+        margin: 0 0 10px;
     }
 
-    ol {
-        list-style-type: disc;
+    dt {
+        font-size: 14px;
+    }
+
+    a:visited {
+        color: #6d598b;
+    }
+
+    pre {
+        background-color: @faint-gray;
+        color: @dark-gray;
+        margin: 20px 0;
+        overflow: auto;
+        padding: 20px;
     }
 }
 
-.sample-run-js {
-    clear: both;
+#site-map-footer {
+    background-color: #f8f8f8;
+    border-top: 1px solid #fff;
     float: left;
-    margin: 10px 0 30px;
-    outline: none;
+    padding: 10px 0;
     width: 100%;
 
-    p {
-        font-size: 14px;
-        line-height: 16px;
-        padding: 10px;
+    .pad {
+        width: 960px;
+
+        > ul {
+            padding: 0;
+        }
+    }
+
+    ul > li {
+        float: left;
+        margin-right: 25px;
+        padding: 0;
+        width: 303px;
+
+        &:last-child {
+            margin-right: 0;
+        }
+
+        h2 {
+            border-bottom: 1px solid @faint-gray;
+            color: @medium-gray;
+            font-size: 20px;
+            line-height: 25px;
+            padding-bottom: 5px;
+        }
+
+        ol {
+            padding: 0;
+
+            li {
+                overflow: hidden;
+                margin: 0;
+                padding: 0;
+                text-overflow: ellipsis;
+            }
+
+            a {
+                font-size: 14px;
+                font-weight: @heavy;
+                line-height: 20px;
+            }
+        }
     }
 }
 
-.tips {
-    clear: both;
-    display: block;
+#footer {
     float: left;
-    margin-left: 20px;
-    width: 95%;
+    padding-top: 1em;
 
-    > ul {
-        clear: both;
-        display: block;
-        float: left;
-        padding: 0 0 20px;
-        width: 95%;
+    p {
+        width: 550px;
     }
 
-    li {
-        clear: both;
-        display: block;
+    ul {
         float: left;
-        line-height: 23px;
-        width: 100%;
     }
-}
 
-#page > section.document-breadcrumb {
-    padding-top: 15px;
-    width: 960px;
-    a, span {
-        font-size: 25px;
+    #footzilla {
+        margin-top: 16px;
     }
 }

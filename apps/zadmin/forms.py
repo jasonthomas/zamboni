@@ -25,13 +25,16 @@ from compat.forms import CompatForm as BaseCompatForm
 from files.models import File
 from zadmin.models import SiteEvent, ValidationJob
 
-log = commonware.log.getLogger('z.zadmin')
+LOGGER_NAME = 'z.zadmin'
+log = commonware.log.getLogger(LOGGER_NAME)
 
 
 class DevMailerForm(happyforms.Form):
     _choices = [('eula',
                  'Developers who have set up EULAs for active add-ons'),
-                ('sdk', 'Developers of active SDK add-ons')]
+                ('sdk', 'Developers of active SDK add-ons'),
+                ('payments',
+                 'Developers of active apps (not add-ons) with payments')]
     recipients = forms.ChoiceField(choices=_choices, required=True)
     subject = forms.CharField(widget=forms.TextInput(attrs=dict(size='100')),
                               required=True)
@@ -275,13 +278,42 @@ class CompatForm(BaseCompatForm):
 class GenerateErrorForm(happyforms.Form):
     error = forms.ChoiceField(choices=(
                     ['zerodivisionerror', 'Zero Division Error (will email)'],
-                    ['iorequesterror', 'IORequest Error (no email)']))
+                    ['iorequesterror', 'IORequest Error (no email)'],
+                    ['metlog_statsd', 'Metlog statsd message'],
+                    ['metlog_json', 'Metlog JSON message'],
+                    ['metlog_cef', 'Metlog CEF message'],
+                    ['metlog_sentry', 'Metlog Sentry message'],
+                    ))
 
     def explode(self):
         error = self.cleaned_data.get('error')
+
         if error == 'zerodivisionerror':
-            1/0
+            1 / 0
         elif error == 'iorequesterror':
             class IOError(Exception):
                 pass
             raise IOError('request data read error')
+        elif error == 'metlog_cef':
+            environ = {'REMOTE_ADDR': '127.0.0.1', 'HTTP_HOST': '127.0.0.1',
+                            'PATH_INFO': '/', 'REQUEST_METHOD': 'GET',
+                            'HTTP_USER_AGENT': 'MySuperBrowser'}
+
+            config = {'cef.version': '0',
+                           'cef.vendor': 'mozilla',
+                           'cef.device_version': '3',
+                           'cef.product': 'zamboni',
+                           'cef': True}
+
+            settings.METLOG.cef('xx\nx|xx\rx', 5, environ, config,
+                    username='me', ext1='ok=ok', ext2='ok\\ok')
+        elif error == 'metlog_statsd':
+            settings.METLOG.incr(name=LOGGER_NAME)
+        elif error == 'metlog_json':
+            settings.METLOG.metlog(type="metlog_json",
+                    fields={'foo': 'bar', 'secret': 42})
+        elif error == 'metlog_sentry':
+            try:
+                1 / 0
+            except:
+                settings.METLOG.raven('metlog_sentry error triggered')

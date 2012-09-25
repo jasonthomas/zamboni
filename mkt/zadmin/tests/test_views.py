@@ -1,3 +1,8 @@
+from datetime import date
+
+import json
+
+from django.conf import settings
 from nose.tools import eq_
 from pyquery import PyQuery as pq
 
@@ -11,6 +16,87 @@ from users.models import UserProfile
 
 from mkt.webapps.models import Webapp
 from mkt.zadmin.models import FeaturedApp, FeaturedAppRegion
+
+
+class TestEcosystem(amo.tests.TestCase):
+    fixtures = ['base/users']
+
+    def setUp(self):
+        self.url = reverse('mkt.zadmin.ecosystem')
+
+    def test_staff_access(self):
+        user = UserProfile.objects.get(email='regular@mozilla.com')
+        self.grant_permission(user, 'AdminTools:View')
+        self.client.login(username='regular@mozilla.com', password='password')
+        res = self.client.get(self.url)
+        eq_(res.status_code, 200)
+
+
+class TestGenerateError(amo.tests.TestCase):
+    fixtures = ['base/users']
+
+    def setUp(self):
+        self.client.login(username='admin@mozilla.com', password='password')
+        metlog = settings.METLOG
+        METLOG_CONF = {
+            'logger': 'zamboni',
+            'plugins': {'cef': ('metlog_cef.cef_plugin:config_plugin', 
+                                {'override': True})},
+            'sender': {'class': 'metlog.senders.DebugCaptureSender'},
+        }
+        from metlog.config import client_from_dict_config
+        self.metlog = client_from_dict_config(METLOG_CONF, metlog)
+        self.metlog.sender.msgs.clear()
+
+    def test_metlog_statsd(self):
+        self.url = reverse('zadmin.generate-error')
+        self.client.post(self.url,
+                         {'error': 'metlog_statsd'})
+
+        eq_(len(self.metlog.sender.msgs), 1)
+        msg = json.loads(self.metlog.sender.msgs[0])
+
+        eq_(msg['severity'], 6)
+        eq_(msg['logger'], 'zamboni')
+        eq_(msg['payload'], '1')
+        eq_(msg['type'], 'counter')
+        eq_(msg['fields']['rate'], 1.0)
+        eq_(msg['fields']['name'], 'z.zadmin')
+
+    def test_metlog_json(self):
+        self.url = reverse('zadmin.generate-error')
+        self.client.post(self.url,
+                         {'error': 'metlog_json'})
+
+        eq_(len(self.metlog.sender.msgs), 1)
+        msg = json.loads(self.metlog.sender.msgs[0])
+
+        eq_(msg['type'], 'metlog_json')
+        eq_(msg['logger'], 'zamboni')
+        eq_(msg['fields']['foo'], 'bar')
+        eq_(msg['fields']['secret'], 42)
+
+    def test_metlog_cef(self):
+        self.url = reverse('zadmin.generate-error')
+        self.client.post(self.url,
+                         {'error': 'metlog_cef'})
+
+        eq_(len(self.metlog.sender.msgs), 1)
+        msg = json.loads(self.metlog.sender.msgs[0])
+
+        eq_(msg['type'], 'cef')
+        eq_(msg['logger'], 'zamboni')
+
+    def test_metlog_sentry(self):
+        self.url = reverse('zadmin.generate-error')
+        self.client.post(self.url,
+                         {'error': 'metlog_sentry'})
+
+        msgs = [json.loads(m) for m in self.metlog.sender.msgs]
+        eq_(len(msgs), 1)
+        msg = msgs[0]
+
+        eq_(msg['type'], 'sentry')
 
 
 class TestFeaturedApps(amo.tests.TestCase):
@@ -114,12 +200,49 @@ class TestFeaturedApps(amo.tests.TestCase):
     def test_set_region(self):
         f = FeaturedApp.objects.create(app=self.a1, category=None)
         FeaturedAppRegion.objects.create(featured_app=f, region=1)
-        r = self.client.post(reverse('zadmin.set_region_ajax'),
+        r = self.client.post(reverse('zadmin.set_attrs_ajax'),
                              data={'app': f.pk, 'region[]': (3, 2)})
         eq_(r.status_code, 200)
         eq_(list(FeaturedApp.objects.get(pk=f.pk).regions.values_list(
                     'region', flat=True)),
             [2, 3])
+
+    def test_set_startdate(self):
+        f = FeaturedApp.objects.create(app=self.a1, category=None)
+        FeaturedAppRegion.objects.create(featured_app=f, region=1)
+        r = self.client.post(reverse('zadmin.set_attrs_ajax'),
+                             data={'app': f.pk, 'startdate': '2012-08-01'})
+        eq_(r.status_code, 200)
+        eq_(FeaturedApp.objects.get(pk=f.pk).start_date, date(2012, 8, 1))
+
+    def test_set_enddate(self):
+        f = FeaturedApp.objects.create(app=self.a1, category=None)
+        FeaturedAppRegion.objects.create(featured_app=f, region=1)
+        r = self.client.post(reverse('zadmin.set_attrs_ajax'),
+                             data={'app': f.pk, 'enddate': '2012-08-31'})
+        eq_(r.status_code, 200)
+        eq_(FeaturedApp.objects.get(pk=f.pk).end_date, date(2012, 8, 31))
+
+    def test_remove_startdate(self):
+        f = FeaturedApp.objects.create(app=self.a1, category=None)
+        f.start_date = date(2012, 8, 1)
+        f.save()
+        FeaturedAppRegion.objects.create(featured_app=f, region=1)
+        r = self.client.post(reverse('zadmin.set_attrs_ajax'),
+                             data={'app': f.pk})
+        eq_(r.status_code, 200)
+        eq_(FeaturedApp.objects.get(pk=f.pk).start_date, None)
+
+    def test_remove_enddate(self):
+        f = FeaturedApp.objects.create(app=self.a1, category=None)
+        FeaturedAppRegion.objects.create(featured_app=f, region=1)
+        f.end_date = date(2012, 8, 1)
+        f.save()
+        r = self.client.post(reverse('zadmin.set_attrs_ajax'),
+                             data={'app': f.pk, 'startdate': '2012-07-01',
+                                   'enddate': ''})
+        eq_(r.status_code, 200)
+        eq_(FeaturedApp.objects.get(pk=f.pk).end_date, None)
 
 
 class TestAddonSearch(amo.tests.ESTestCase):

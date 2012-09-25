@@ -30,6 +30,18 @@
     background: @black-border;
 }
 
+.product-details .mkt-tile .icon.mobile_tile,
+.listing .mkt-tile .icon.mobile_tile {
+    display: none;
+}
+
+.featured .mkt-tile .icon {
+    display: none;
+    &.mobile_tile {
+        display: block;
+    }
+}
+
 // Listing
 // name + icon + price + rating in a vertical listview.
 // also used as standalone "card" on detail pages.
@@ -38,6 +50,16 @@
 .listing .mkt-tile {
     // TODO: Maybe we don't need this twice. We'll see when we do desktop.
     .gradient-two-color-with-image(#f7f7f7, @barely-gray, @grain-src);
+}
+
+// Remove me when Webkit supports animated PNG!
+@-webkit-keyframes spin {
+    from {
+        -webkit-transform: rotate(0turn);
+    }
+    to {
+        -webkit-transform: rotate(1turn);
+    }
 }
 
 .listing .mkt-tile {
@@ -70,7 +92,19 @@
         font-size: 13px;
         margin: 2px 0 2px 10px;
         padding: 0;
-        width: 100px;
+        width: 70px;
+
+        .spin {
+            display: inline-block;
+            background: url(../../img/mkt/loading-16.png) no-repeat center center;
+            height: 16px;
+            width: 16px;
+            -webkit-animation-duration: 1.5s;
+            -webkit-animation-name: spin;
+            -webkit-animation-iteration-count: infinite;
+            -webkit-animation-timing-function: linear;
+            margin: 3px 0;
+        }
     }
     .rating {
         clear: both;
@@ -238,7 +272,10 @@
     border-bottom: 1px solid rgba(0,0,0,.3);
     border-top: 1px solid rgba(0,0,0,.05);
     position: relative;
-    overflow: hidden;
+    .slider {
+        height: 230px;
+        overflow: hidden;
+    }
     ul {
         padding: 15px 0;
         margin: 0 auto;
@@ -262,7 +299,42 @@
     }
 }
 
+.tray {
+    .dots {
+        width: 100%;
+        position: absolute;
+        top: -4px;
+        text-align: center;
+        height: 6px;
+        line-height: 6px;
+    }
+    .dot {
+        display: inline-block;
+        vertical-align: top;
+        width: 6px;
+        height: 6px;
+        .border-radius(3px);
+        margin: 0 3px;
+        .gradient-two-color(#667480, #828f99);
+        .box-shadow(0 0 1px fade(#fff, 50%),
+                    1px 0 2px 2px fade(#000, 21%) inset,
+                    0 1px 1px fade(#000,.5));
+        &.current {
+            .gradient-two-color(#368dd9, #57a9fa);
+            .box-shadow(0 -1px 1px fade(#03101a, 35%) inset,
+                        0 0 4px fade(#0091ff, 56%));
+        }
+    }
+}
+
 // TODO: Maybe later.
 .noApps {
     display: none;
+}
+
+.bad-platform {
+    color: @maroon;
+    font-size: 11px;
+    line-height: 12px;
+    margin-top: 4px;
 }

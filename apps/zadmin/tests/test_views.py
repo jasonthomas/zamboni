@@ -739,6 +739,15 @@ class TestBulkValidationTask(BulkValidationTest):
             % (self.curr_max.version, self.new_max.version))
         eq_(mail.outbox[0].to, ['fliggy@mozilla.com'])
 
+    @mock.patch('validator.validate.validate')
+    def test_validator_bulk_compat_flag(self, validate):
+        try:
+            self.start_validation()
+        except Exception:
+            # We only care about the call to `validate()`, not the result.
+            pass
+        assert validate.call_args[1].get('compat_test')
+
     @mock.patch('zadmin.tasks.run_validator')
     def test_task_error(self, run_validator):
         run_validator.side_effect = RuntimeError('validation error')
@@ -1222,7 +1231,8 @@ class TestMonthlyPick(amo.tests.TestCase):
 
 
 class TestFeatures(amo.tests.TestCase):
-    fixtures = ['base/apps', 'base/users', 'base/collections']
+    fixtures = ['base/apps', 'base/users', 'base/collections',
+                'base/addon_3615.json']
 
     def setUp(self):
         assert self.client.login(username='admin@mozilla.com',
@@ -1395,8 +1405,7 @@ class TestLookup(amo.tests.TestCase):
 
 
 class TestAddonSearch(amo.tests.ESTestCase):
-    fixtures = ['base/users','base/337141-steamcube',
-                'base/addon_3615']
+    fixtures = ['base/users', 'base/337141-steamcube', 'base/addon_3615']
 
     def setUp(self):
         self.reindex(Addon)
@@ -1419,8 +1428,7 @@ class TestAddonSearch(amo.tests.ESTestCase):
 
 
 class TestAddonAdmin(amo.tests.TestCase):
-    fixtures = ['base/users','base/337141-steamcube',
-                'base/addon_3615']
+    fixtures = ['base/users', 'base/337141-steamcube', 'base/addon_3615']
 
     def setUp(self):
         assert self.client.login(username='admin@mozilla.com',
@@ -1843,13 +1851,14 @@ class TestElastic(amo.tests.ESTestCase):
             reverse('users.login') + '?to=/en-US/admin/elastic')
 
     @mock.patch('zadmin.views.elasticutils')
+    @mock.patch('zadmin.views.create_es_index_if_missing')
     @mock.patch('zadmin.views.setup_mapping')
-    def test_recreate_index(self, setup_mapping, es):
+    def test_recreate_index(self, setup_mapping, _create, es):
         self.client.post(self.url, {'recreate': 1})
         index = settings.ES_INDEXES['default']
         index in es.get_es().delete_index_if_exists.call_args_list[0][0]
         assert setup_mapping.called
-        index in es.get_es().create_index_if_missing.call_args_list[0][0]
+        index in _create.call_args_list[0][0]
 
     def test_reindex_addons(self):
         eq_(list(Addon.search()), [])
@@ -1913,6 +1922,14 @@ class TestEmailDevs(amo.tests.TestCase):
         res = self.post(recipients='sdk')
         self.assertNoFormErrors(res)
         eq_(len(mail.outbox), 0)
+
+    def test_only_apps_with_payments(self):
+        self.addon.update(type=amo.ADDON_WEBAPP,
+                          paypal_id='fliggy@fligtar.net',
+                          premium_type=amo.ADDON_PREMIUM)
+        res = self.post(recipients='payments')
+        self.assertNoFormErrors(res)
+        eq_(len(mail.outbox), 1)
 
     def test_ignore_deleted(self):
         self.addon.update(status=amo.STATUS_DELETED)

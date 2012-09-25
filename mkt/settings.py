@@ -67,6 +67,7 @@ INSTALLED_APPS += (
     'django_appcache',
     'mkt.site',
     'mkt.account',
+    'mkt.api',
     'mkt.browse',
     'mkt.detail',
     'mkt.developers',
@@ -273,42 +274,55 @@ STATSD_RECORD_KEYS = [
 
 PISTON_DISPLAY_ERRORS = False
 
+# Key for signing requests to BlueVia for developer registration.
+BLUEVIA_SECRET = ''
+BLUEVIA_ORIGIN = 'https://opentel20.tidprojects.com'
+BLUEVIA_URL = BLUEVIA_ORIGIN + '/en/mozilla/?req='
+
 # Link to the appcache manifest (activate it) when True.
 USE_APPCACHE = False
 
 # These are absolute paths to add to the cache. Wildcards are not allowed here.
 # These paths will be added as-is to the cache section.
 APPCACHE_TO_CACHE = [
-    '/favicon.ico',
-    'https://login.persona.org/include.js'
+    'https://login.persona.org/include.js',
+    '/media/img/mkt/grain.png',
 ]
 
 APPCACHE_NET_PATHS = [
     '*'
 ]
 
-# These are paths relative to MEDIA_ROOT that you want to explicitly
+APPCACHE_FALLBACK_PATHS = {
+    '/app/': '/offline/home',
+}
+
+# This callable yields paths relative to MEDIA_ROOT that you want to explicitly
 # cache. The browser will load *all* of these URLs when your app first loads
 # so be mindful to only list essential media files. The actual URL of the path
 # to cache will be determined using MEDIA_URL.
 # If you use wildcards here the real paths to the file(s) will be
 # expanded using glob.glob()
 
-APPCACHE_MEDIA_TO_CACHE = [
-    'js/mkt/consumer-min.js',
-    'css/mkt/consumer-min.css'
-]
+def APPCACHE_MEDIA_TO_CACHE():
+    from jingo_minify import helpers
+    return [
+        'js/mkt/consumer-min.js?build=%s' % helpers.BUILD_ID_JS,
+        'css/mkt/consumer-min.css?build=%s' % helpers.BUILD_ID_CSS
+    ]
 
-APPCACHE_MEDIA_DEBUG = []
-for f in list(asset_bundles.CSS['mkt/consumer']):
-    if f.endswith('.less'):
-        APPCACHE_MEDIA_DEBUG.append(f + '.css')
-    else:
-        APPCACHE_MEDIA_DEBUG.append(f)
-APPCACHE_MEDIA_DEBUG.extend(asset_bundles.JS['mkt/consumer'])
 
 # Are you working locally? place the following line in your settings_local:
 # APPCACHE_MEDIA_TO_CACHE = APPCACHE_MEDIA_DEBUG
+
+def APPCACHE_MEDIA_DEBUG():
+    for f in list(asset_bundles.CSS['mkt/consumer']):
+        if f.endswith('.less'):
+            yield f + '.css'
+        else:
+            yield f
+    for path in asset_bundles.JS['mkt/consumer']:
+        yield path
 
 # Allowed `installs_allowed_from` values for manifest validator.
 VALIDATOR_IAF_URLS = ['https://marketplace.mozilla.org']
@@ -329,3 +343,8 @@ GEOIP_HOST = 'localhost'
 GEOIP_PORT = '5309'
 GEOIP_DEFAULT_VAL = 'us'
 GEOIP_DEFAULT_TIMEOUT = .2
+
+# A smaller range of languages for the Marketplace.
+AMO_LANGUAGES = ('en-US', 'es', 'pt-BR')
+LANGUAGES = lazy(lazy_langs, dict)(AMO_LANGUAGES)
+LANGUAGE_URL_MAP = dict([(i.lower(), i) for i in AMO_LANGUAGES])

@@ -83,6 +83,14 @@ function makeOrGetOverlay(id) {
     return $(el);
 }
 
+function getTemplate($el) {
+    // If the element exists, return the template.
+    if ($el.length) {
+        return template($el.html());
+    }
+    // Otherwise, return undefined.
+}
+
 // Initializes character counters for textareas.
 function initCharCount() {
     var countChars = function(el, cc) {
@@ -112,6 +120,18 @@ function initCharCount() {
             countChars(this, $cc);
         }, 250)).trigger('blur');
     });
+}
+
+
+function successNotification(msg) {
+    var success = $('.success h2');
+    if (success.length) {
+        success.text(msg);
+    } else {
+        $('#page').prepend($('<section class="full notification-box">' +
+                             '<div class="success"><h2>' + msg +
+                             '</h2></div></section>'));
+    }
 }
 
 

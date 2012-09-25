@@ -24,9 +24,10 @@ from amo.utils import ImageCheck
 from files.models import FileUpload
 
 import mkt
+from mkt.constants import APP_IMAGE_SIZES
 from mkt.developers import tasks
 from mkt.submit.tests.test_views import BaseWebAppTest
-from mkt.webapps.models import AddonExcludedRegion as AER
+from mkt.webapps.models import AddonExcludedRegion as AER, ImageAsset, Webapp
 
 
 def test_resize_icon_shrink():
@@ -41,8 +42,8 @@ def test_resize_icon_shrink():
 def test_resize_icon_enlarge():
     """ Image stays the same, since the new size is bigger than both sides. """
 
-    resize_size = 100
-    final_size = (82, 31)
+    resize_size = 1000
+    final_size = (339, 128)
 
     _uploader(resize_size, final_size)
 
@@ -50,8 +51,8 @@ def test_resize_icon_enlarge():
 def test_resize_icon_same():
     """ Image stays the same, since the new size is the same. """
 
-    resize_size = 82
-    final_size = (82, 31)
+    resize_size = 339
+    final_size = (339, 128)
 
     _uploader(resize_size, final_size)
 
@@ -60,14 +61,14 @@ def test_resize_icon_list():
     """ Resize multiple images at once. """
 
     resize_size = [32, 82, 100]
-    final_size = [(32, 12), (82, 31), (82, 31)]
+    final_size = [(32, 12), (82, 30), (100, 37)]
 
     _uploader(resize_size, final_size)
 
 
 def _uploader(resize_size, final_size):
     img = get_image_path('mozilla.png')
-    original_size = (82, 31)
+    original_size = (339, 128)
 
     src = tempfile.NamedTemporaryFile(mode='r+w+b', suffix=".png",
                                       delete=False)
@@ -75,7 +76,9 @@ def _uploader(resize_size, final_size):
     # resize_icon removes the original
     shutil.copyfile(img, src.name)
 
-    src_image = Image.open(src.name)
+    with storage.open(src.name) as fp:
+        src_image = Image.open(fp)
+        src_image.load()
     eq_(src_image.size, original_size)
 
     if isinstance(final_size, list):
@@ -83,8 +86,16 @@ def _uploader(resize_size, final_size):
             dest_name = os.path.join(settings.ADDON_ICONS_PATH, '1234')
 
             tasks.resize_icon(src.name, dest_name, resize_size, locally=True)
-            dest_image = Image.open("%s-%s.png" % (dest_name, rsize))
-            eq_(dest_image.size, fsize)
+            with storage.open("%s-%s.png" % (dest_name, rsize)) as fp:
+                dest_image = Image.open(fp)
+                dest_image.load()
+        
+            # Assert that the width is always identical.
+            eq_(dest_image.size[0], fsize[0])
+            # Assert that the height can be a wee bit fuzzy.
+            assert -1 <= dest_image.size[1] - fsize[1] <= 1, (
+                "Got width %d, expected %d" %
+                    (fsize[1], dest_image.size[1]))
 
             if os.path.exists(dest_image.filename):
                 os.remove(dest_image.filename)
@@ -92,10 +103,34 @@ def _uploader(resize_size, final_size):
     else:
         dest = tempfile.NamedTemporaryFile(mode='r+w+b', suffix=".png")
         tasks.resize_icon(src.name, dest.name, resize_size, locally=True)
-        dest_image = Image.open(dest.name)
-        eq_(dest_image.size, final_size)
+        with storage.open(dest.name) as fp:
+            dest_image = Image.open(fp)
+            dest_image.load()
+        
+        # Assert that the width is always identical.
+        eq_(dest_image.size[0], final_size[0])
+        # Assert that the height can be a wee bit fuzzy.
+        assert -1 <= dest_image.size[1] - final_size[1] <= 1, (
+            "Got width %d, expected %d" % (final_size[1], dest_image.size[1]))
 
     assert not os.path.exists(src.name)
+
+
+def test_resize_image_asset():
+    img = get_image_path('mozilla.png')
+    original_size = (339, 128)
+
+    with storage.open(img) as fp:
+        src_image = Image.open(fp)
+        eq_(src_image.size, original_size)
+
+    dest = tempfile.NamedTemporaryFile(mode='r+w+b', suffix=".png")
+    # Make it resize to some arbitrary size that's larger on both sides than
+    # the source image. This is where the behavior differs from resize_image.
+    tasks.resize_imageasset(img, dest.name, (500, 500), locally=True)
+    with storage.open(dest.name) as fp:
+        dest_image = Image.open(fp)
+        eq_(dest_image.size, (500, 500))
 
 
 class TestValidator(amo.tests.TestCase):
@@ -147,10 +182,66 @@ class TestValidator(amo.tests.TestCase):
         assert _mock.called
 
 
+storage_open = storage.open
+def _mock_hide_64px_icon(path, *args, **kwargs):
+    """
+    A function that mocks `storage.open` and throws an IOError if you try to
+    open a 128x128px icon.
+    """
+    if '128' in path:
+        raise IOError('No 128px icon for you!')
+    return storage_open(path, *args, **kwargs)
+
+
+class TestGenerateImageAssets(amo.tests.TestCase):
+    """Test that image assets get generated properly."""
+
+    fixtures = ['webapps/337141-steamcube']
+
+    def setUp(self):
+        self.app = Webapp.objects.get(id=337141)
+        self.app.get_icon_dir = lambda: os.path.join(
+            os.path.dirname(__file__), 'icons/')
+
+    def test_generated_image_assets(self):
+        tasks.generate_image_assets(self.app)
+        for asset in APP_IMAGE_SIZES:
+            ia = ImageAsset.objects.get(addon=self.app,
+                                        slug=asset['slug'])
+            with storage.open(ia.image_path) as fp:
+                im = Image.open(fp)
+                im.load()
+            eq_(im.size, asset['size'])
+
+    @mock.patch('django.core.files.storage.default_storage.open',
+                _mock_hide_64px_icon)
+    def test_use_64(self):
+        # There's an icon set up for this ID that has the path that the
+        # generator would expect for a 64x64px icon. It should fallback
+        # on that one, since there isn't a 128x128px icon.
+        tasks.generate_image_assets(self.app)
+        for asset in APP_IMAGE_SIZES:
+            ia = ImageAsset.objects.get(addon=self.app,
+                                        slug=asset['slug'])
+            with storage.open(ia.image_path) as fp:
+                im = Image.open(fp)
+                im.load()
+            eq_(im.size, asset['size'])
+
+    def test_get_hue(self):
+        with storage.open(os.path.join(os.path.dirname(__file__),
+                                       self.app.get_icon_dir(),
+                                       '%d-128.png' % self.app.id)) as fp:
+            im = Image.open(fp)
+            im.load()
+        eq_(tasks.get_hue(im), 42)
+
+
 class TestFetchManifest(amo.tests.TestCase):
 
     def setUp(self):
         self.upload = FileUpload.objects.create()
+        self.content_type = 'application/x-web-app-manifest+json'
 
         patcher = mock.patch('mkt.developers.tasks.urllib2.urlopen')
         self.urlopen_mock = patcher.start()
@@ -166,6 +257,7 @@ class TestFetchManifest(amo.tests.TestCase):
     def patch_urlopen(self):
         response_mock = mock.Mock()
         response_mock.read.return_value = '<default>'
+        response_mock.headers = {'Content-Type': self.content_type}
         yield response_mock
         self.urlopen_mock.return_value = response_mock
 
@@ -173,6 +265,7 @@ class TestFetchManifest(amo.tests.TestCase):
     def test_success_add_file(self, validator_mock):
         with self.patch_urlopen() as ur:
             ur.read.return_value = 'woo'
+            ur.headers = {'Content-Type': self.content_type}
 
         tasks.fetch_manifest('http://xx.com/manifest.json', self.upload.pk)
         upload = FileUpload.objects.get(pk=self.upload.pk)
@@ -183,7 +276,8 @@ class TestFetchManifest(amo.tests.TestCase):
     @mock.patch('mkt.developers.tasks.validator')
     def test_success_call_validator(self, validator_mock):
         with self.patch_urlopen() as ur:
-            ur.read.return_value = 'woo'
+            ct = self.content_type + '; charset=utf-8'
+            ur.headers = {'Content-Type': ct}
 
         tasks.fetch_manifest('http://xx.com/manifest.json', self.upload.pk)
         assert validator_mock.called
@@ -200,33 +294,48 @@ class TestFetchManifest(amo.tests.TestCase):
         reason = socket.gaierror(8, 'nodename nor servname provided')
         self.urlopen_mock.side_effect = urllib2.URLError(reason)
         tasks.fetch_manifest('url', self.upload.pk)
-        self.check_validation('No manifest was found at that URL.')
+        self.check_validation(
+            'No manifest was found at that URL. Check the address and make'
+            ' sure the manifest is served with the HTTP header '
+            '"Content-Type: application/x-web-app-manifest+json".')
 
     def test_url_timeout(self):
         reason = socket.timeout('too slow')
         self.urlopen_mock.side_effect = urllib2.URLError(reason)
         tasks.fetch_manifest('url', self.upload.pk)
-        self.check_validation('No manifest was found at that URL.')
+        self.check_validation(
+            'No manifest was found at that URL. Check the address and make'
+            ' sure the manifest is served with the HTTP header '
+            '"Content-Type: application/x-web-app-manifest+json".')
 
     def test_other_url_error(self):
         reason = Exception('Some other failure.')
         self.urlopen_mock.side_effect = urllib2.URLError(reason)
         tasks.fetch_manifest('url', self.upload.pk)
-        self.check_validation('No manifest was found at that URL.')
+        self.check_validation(
+            'No manifest was found at that URL. Check the address and make'
+            ' sure the manifest is served with the HTTP header '
+            '"Content-Type: application/x-web-app-manifest+json".')
 
-    def test_no_content_type_bad_json(self):
+    def test_no_content_type(self):
         with self.patch_urlopen() as ur:
             ur.headers = {}
 
         tasks.fetch_manifest('url', self.upload.pk)
-        self.check_validation('JSON Parse Error')
+        self.check_validation(
+            'No manifest was found at that URL. Check the address and make'
+            ' sure the manifest is served with the HTTP header '
+            '"Content-Type: application/x-web-app-manifest+json".')
 
-    def test_bad_content_type_bad_json(self):
+    def test_bad_content_type(self):
         with self.patch_urlopen() as ur:
             ur.headers = {'Content-Type': 'x'}
 
         tasks.fetch_manifest('url', self.upload.pk)
-        self.check_validation('JSON Parse Error')
+        self.check_validation(
+            'No manifest was found at that URL. Check the address and make'
+            ' sure the manifest is served with the HTTP header '
+            '"Content-Type: application/x-web-app-manifest+json".')
 
     def test_response_too_large(self):
         with self.patch_urlopen() as ur:
@@ -240,7 +349,10 @@ class TestFetchManifest(amo.tests.TestCase):
         self.urlopen_mock.side_effect = urllib2.HTTPError(
             'url', 404, 'Not Found', [], None)
         tasks.fetch_manifest('url', self.upload.pk)
-        self.check_validation('No manifest was found at that URL.')
+        self.check_validation(
+            'No manifest was found at that URL. Check the address and make'
+            ' sure the manifest is served with the HTTP header '
+            '"Content-Type: application/x-web-app-manifest+json".')
 
     def test_strip_utf8_bom(self):
         with self.patch_urlopen() as ur:
@@ -282,6 +394,10 @@ class TestFetchIcon(BaseWebAppTest):
         assert self.client.login(username='regular@mozilla.com',
                                  password='password')
         return self.post_addon()
+
+    def test_no_version(self):
+        app = Webapp()
+        eq_(tasks.fetch_icon(app), None)
 
     def test_no_icons(self):
         path = os.path.join(self.apps_path, 'noicon.webapp')

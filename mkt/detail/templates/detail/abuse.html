@@ -7,11 +7,10 @@
 {% endblock %}
 
 {% block content %}
-  {{ mkt_breadcrumbs(product, [(None, title)]) }}
   <section id="abuse" class="friendly">
     <div>
-      <h1>{{ title }}</h1>
-      <p>
+      <h1 id="top">{{ title }}</h1>
+      <p class="intro">
         <label id="recap-label" for="{{ abuse_form.text.auto_id }}">
           {% trans policies_url='https://developer.mozilla.org/en/Apps/'
                                 'Marketplace_Review' %}
@@ -23,32 +22,7 @@
         </label>
       </p>
       <form method="post">
-        {{ csrf() }}
-        {{ form_field(abuse_form.text, req=False, label=None, tag='p') }}
-        {% if abuse_form.has_recaptcha %}
-        {% from 'includes/forms.html' import required %}
-          <div id="recap-container">
-            <label for="recaptcha_response_field">
-              {{ _('Are you human?') }} {{ required() }}
-              <a href="#" id="recaptcha_help">{{ _("What's this?") }}</a>
-            </label>
-            <div class="recaptcha-container">
-              {% trans %}
-                <p>
-                  Please enter <strong>both words</strong> below,
-                  <strong>separated by a space</strong>.
-                </p>
-                <p>
-                  If this is hard to read, you can
-                  <a href="#" id="recaptcha_different">try different words</a> or
-                  <a href="#" id="recaptcha_audio">listen to something</a> instead.
-                </p>
-              {% endtrans %}
-              <div id="recaptcha_div"></div>
-            </div>
-          </div>
-          {{ abuse_form.recaptcha.errors }}
-        {% endif %}
+        {% include 'site/helpers/abuse.html' %}
         <p class="form-footer">
           <button type="submit">{{ _('Send Report') }}</button> {{ _('or') }}
           <a href="{{ product.get_detail_url() }}">{{ _('Cancel') }}</a>

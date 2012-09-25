@@ -93,6 +93,27 @@ class TestHome(amo.tests.TestCase):
         self.assertTemplateUsed(r, 'developers/apps/dashboard.html')
 
 
+class TestPayPalJS(amo.tests.TestCase):
+    fixtures = ['base/users']
+
+    def setUp(self):
+        self.url = reverse('mkt.developers.apps')
+        assert self.client.login(username='regular@mozilla.com',
+                                 password='password')
+
+    def test_no_paypal_js(self):
+        self.create_switch('enabled-paypal', active=False)
+        resp = self.client.get(self.url)
+        assert not settings.PAYPAL_JS_URL in resp.content, (
+                    'When paypal is disabled, its JS lib should not load')
+
+    def test_load_paypal_js(self):
+        self.create_switch('enabled-paypal')
+        resp = self.client.get(self.url)
+        assert settings.PAYPAL_JS_URL in resp.content, (
+                    'When paypal is enabled, its JS lib should load')
+
+
 class TestAppBreadcrumbs(AppHubTest):
 
     def setUp(self):
@@ -123,9 +144,6 @@ class TestAppBreadcrumbs(AppHubTest):
 
 
 class TestAppDashboard(AppHubTest):
-
-    def setUp(self):
-        super(TestAppDashboard, self).setUp()
 
     def test_no_apps(self):
         Addon.objects.all().delete()
@@ -161,8 +179,7 @@ class TestAppDashboard(AppHubTest):
         eq_(doc('.more-actions-popup').length, 0)
 
     def test_action_links(self):
-        waffle.models.Switch.objects.get_or_create(name='app-stats',
-                                                   active=True)
+        self.create_switch('app-stats')
         app = self.get_app()
         app.update(public_stats=True)
         self.make_mine()
@@ -177,10 +194,25 @@ class TestAppDashboard(AppHubTest):
         amo.tests.check_links([('View Statistics', app.get_stats_url())],
             doc('a.stats-link'), verify=False)
 
+    def test_disabled_payments_action_links(self):
+        self.create_switch('app-stats')
+        self.create_switch('disabled-payments')
+        app = self.get_app()
+        app.update(public_stats=True)
+        self.make_mine()
+        doc = pq(self.client.get(self.url).content)
+        expected = [
+            ('Edit Listing', app.get_dev_url()),
+            ('Manage Authors', app.get_dev_url('owner')),
+            ('Manage Status', app.get_dev_url('versions')),
+            ('View Listing', app.get_url_path()),
+            ('View Statistics', app.get_stats_url()),
+        ]
+        amo.tests.check_links(expected, doc('a.action-link'), verify=False)
+
     def test_action_links_with_payments(self):
-        waffle.models.Switch.objects.create(name='allow-refund', active=True)
-        waffle.models.Switch.objects.create(name='in-app-payments',
-            active=True)
+        self.create_switch('allow-refund')
+        self.create_switch('in-app-payments')
         app = self.get_app()
         for status in [amo.ADDON_PREMIUM_INAPP, amo.ADDON_FREE_INAPP]:
             app.update(premium_type=status)
@@ -189,10 +221,24 @@ class TestAppDashboard(AppHubTest):
             expected = [
                 ('Manage Status', app.get_dev_url('versions')),
                 ('Manage In-App Payments', app.get_dev_url('in_app_config')),
-                ('Manage PayPal', app.get_dev_url('paypal_setup')),
                 ('Manage Refunds', app.get_dev_url('refunds')),
             ]
+            eq_(doc('.status-link').length, 0)
             amo.tests.check_links(expected, doc('.more-actions-popup a'))
+
+    def test_disabled_payments_action_links_with_payments(self):
+        self.create_switch('allow-refund')
+        self.create_switch('in-app-payments')
+        self.create_switch('disabled-payments')
+        app = self.get_app()
+        for status in [amo.ADDON_PREMIUM_INAPP, amo.ADDON_FREE_INAPP]:
+            app.update(premium_type=status)
+            self.make_mine()
+            doc = pq(self.client.get(self.url).content)
+            status_link = doc('.status-link')
+            eq_(status_link.length, 1)
+            eq_(status_link.attr('href'), app.get_dev_url('versions'))
+            eq_(doc('.more-actions-popup').length, 0)
 
 
 class TestManageLinks(AppHubTest):
@@ -390,6 +436,9 @@ class TestPaymentsProfile(amo.tests.TestCase):
 class MarketplaceMixin(object):
 
     def setUp(self):
+        waffle.models.Switch.objects.get_or_create(name='currencies',
+                                                   active=True)
+
         self.addon = Addon.objects.get(id=337141)
         self.addon.update(status=amo.STATUS_NOMINATED,
             highest_status=amo.STATUS_NOMINATED)
@@ -419,6 +468,10 @@ class MarketplaceMixin(object):
         self.addon.update(premium_type=amo.ADDON_PREMIUM,
                           paypal_id='a@a.com')
 
+        session = self.client.session
+        session['unconfirmed_paypal_id'] = self.addon.paypal_id
+        session.save()
+
 
 # Mock out verifying the paypal id has refund permissions with paypal and
 # that the account exists on paypal.
@@ -426,36 +479,56 @@ class MarketplaceMixin(object):
 @mock.patch('mkt.developers.forms.PremiumForm.clean',
              new=lambda x: x.cleaned_data)
 class TestMarketplace(MarketplaceMixin, amo.tests.TestCase):
-    fixtures = ['base/users', 'webapps/337141-steamcube']
+    fixtures = ['base/users', 'webapps/337141-steamcube', 'market/prices']
 
     def get_data(self, **kw):
         data = {
             'price': self.price.pk,
             'free': self.other_addon.pk,
-            'do_upsell': 1,
-            'text': 'some upsell',
             'premium_type': amo.ADDON_PREMIUM,
-            'support_email': 'c@c.com',
         }
         data.update(kw)
         return data
 
-    def test_initial(self):
+    def test_initial_free(self):
+        res = self.client.get(self.url)
+        eq_(res.status_code, 200)
+        eq_(res.context['form'].initial, {'premium_type': amo.ADDON_FREE})
+
+    def test_initial_paid(self):
         self.setup_premium()
         res = self.client.get(self.url)
         eq_(res.status_code, 200)
         eq_(res.context['form'].initial['price'], self.price)
 
+    def test_set_free(self):
+        res = self.client.post(self.url, {'premium_type': amo.ADDON_FREE})
+        self.assert3xx(res, self.url)
+
     def test_set(self):
         self.setup_premium()
-        res = self.client.post(self.url, data={
-            'support_email': 'c@c.com',
-            'price': self.price_two.pk,
-            'premium_type': amo.ADDON_PREMIUM
-        })
+        res = self.client.post(self.url, data=self.get_data(price=self.
+                                                            price_two.pk))
         eq_(res.status_code, 302)
         self.addon = Addon.objects.get(pk=self.addon.pk)
         eq_(self.addon.addonpremium.price, self.price_two)
+
+    def test_set_currency(self):
+        self.setup_premium()
+        res = self.client.post(self.url,
+                               data=self.get_data(currencies=['EUR', 'BRL']))
+        eq_(res.status_code, 302)
+        self.addon = Addon.objects.get(pk=self.addon.pk)
+        eq_(self.addon.premium.currencies, ['EUR', 'BRL'])
+
+    def test_set_currency_fail(self):
+        self.setup_premium()
+        res = self.client.post(self.url,
+                               data=self.get_data(currencies=['EUR', 'LOL']))
+        eq_(res.status_code, 200)
+        self.assertFormError(res, 'form', 'currencies',
+                              [u'Select a valid choice. '
+                                'LOL is not one of the available choices.'])
 
     def test_set_upsell(self):
         self.setup_premium()
@@ -477,11 +550,6 @@ class TestMarketplace(MarketplaceMixin, amo.tests.TestCase):
         eq_(len(res.context['form'].errors['free']), 1)
         eq_(len(self.addon._upsell_to.all()), 0)
 
-    def test_set_upsell_required(self):
-        self.setup_premium()
-        res = self.client.post(self.url, data=self.get_data(text=''))
-        eq_(res.status_code, 200)
-
     def test_set_upsell_not_mine(self):
         self.setup_premium()
         self.other_addon.authors.clear()
@@ -493,34 +561,25 @@ class TestMarketplace(MarketplaceMixin, amo.tests.TestCase):
         upsell = AddonUpsell.objects.create(free=self.other_addon,
                                             premium=self.addon)
         eq_(self.addon._upsell_to.all()[0], upsell)
-        self.client.post(self.url, data=self.get_data(do_upsell=0))
+        self.client.post(self.url, data=self.get_data(free=''))
         eq_(len(self.addon._upsell_to.all()), 0)
-
-    def test_change_upsell(self):
-        self.setup_premium()
-        AddonUpsell.objects.create(free=self.other_addon,
-                                   premium=self.addon, text='foo')
-        eq_(self.addon._upsell_to.all()[0].text, 'foo')
-        self.client.post(self.url, data=self.get_data(text='bar'))
-        eq_(self.addon._upsell_to.all()[0].text, 'bar')
 
     def test_replace_upsell(self):
         self.setup_premium()
         # Make this add-on an upsell of some free add-on.
-        AddonUpsell.objects.create(free=self.other_addon,
-                                   premium=self.addon, text='foo')
+        upsell = AddonUpsell.objects.create(free=self.other_addon,
+                                            premium=self.addon)
         # And this will become our new upsell, replacing the one above.
         new = Addon.objects.create(type=amo.ADDON_WEBAPP,
-                                   premium_type=amo.ADDON_FREE)
-        new.update(status=amo.STATUS_PUBLIC)
+                                   premium_type=amo.ADDON_FREE,
+                                   status=amo.STATUS_PUBLIC)
         AddonUser.objects.create(addon=new, user=self.addon.authors.all()[0])
 
-        eq_(self.addon._upsell_to.all()[0].text, 'foo')
-        self.client.post(self.url, self.get_data(free=new.id, text='bar'))
+        eq_(self.addon._upsell_to.all()[0], upsell)
+        self.client.post(self.url, self.get_data(free=new.id))
         upsell = self.addon._upsell_to.all()
         eq_(len(upsell), 1)
         eq_(upsell[0].free, new)
-        eq_(upsell[0].text, 'bar')
 
     def test_no_free(self):
         self.setup_premium()
@@ -531,23 +590,26 @@ class TestMarketplace(MarketplaceMixin, amo.tests.TestCase):
     @mock.patch('paypal.get_permissions_token', lambda x, y: x.upper())
     @mock.patch('paypal.get_personal_data', lambda x: {'email': 'a@a.com'})
     def test_permissions_token(self):
+
         self.setup_premium()
         eq_(self.addon.premium.paypal_permissions_token, '')
         url = self.addon.get_dev_url('acquire_refund_permission')
         self.client.get(urlparams(url, request_token='foo',
                                        verification_code='bar'))
         self.addon = Addon.objects.get(pk=self.addon.pk)
-        eq_(self.addon.premium.paypal_permissions_token, 'FOO')
+        eq_(self.addon.premium.paypal_permissions_token.lower(), 'foo')
 
     @mock.patch('paypal.get_permissions_token', lambda x, y: x.upper())
     @mock.patch('paypal.get_personal_data', lambda x: {})
     def test_permissions_token_different_email(self):
+        # With different email, the new token overwrites the old one, and the
+        # paypal_id stays the same.
         self.setup_premium()
         url = self.addon.get_dev_url('acquire_refund_permission')
         self.client.get(urlparams(url, request_token='foo',
                                        verification_code='bar'))
         self.addon = Addon.objects.get(pk=self.addon.pk)
-        eq_(self.addon.premium.paypal_permissions_token, '')
+        eq_(self.addon.premium.paypal_permissions_token.lower(), 'foo')
 
     @mock.patch('mkt.developers.views.client')
     def test_permissions_token_solitude(self, client):
@@ -569,7 +631,7 @@ class TestMarketplace(MarketplaceMixin, amo.tests.TestCase):
         res = self.client.get(urlparams(url, request_token='foo',
                                         verification_code='bar'))
         self.assertRedirects(res,
-                             self.addon.get_dev_url('paypal_setup_bounce'))
+                             self.addon.get_dev_url('payments'))
 
 
 class TestIssueRefund(amo.tests.TestCase):
@@ -1247,22 +1309,21 @@ class TestResumeStep(amo.tests.TestCase):
 
     def test_no_step_redirect(self):
         r = self.client.get(self.url, follow=True)
-        self.assertRedirects(r, self.get_addon().get_dev_url('edit'), 302)
+        self.assertRedirects(r, self.webapp.get_dev_url('edit'), 302)
 
     def test_step_redirects(self):
         AppSubmissionChecklist.objects.create(addon=self.webapp,
                                               terms=True, manifest=True)
         r = self.client.get(self.url, follow=True)
-        self.assertRedirects(r, reverse('submit.app.details',
-                                        args=[self.webapp.app_slug]))
+        self.assert3xx(r, reverse('submit.app.details',
+                                  args=[self.webapp.app_slug]))
 
-    def test_redirect_from_other_pages(self):
+    def test_no_resume_when_done(self):
         AppSubmissionChecklist.objects.create(addon=self.webapp,
                                               terms=True, manifest=True,
                                               details=True)
         r = self.client.get(self.webapp.get_dev_url('edit'), follow=True)
-        self.assertRedirects(r, reverse('submit.app.payments',
-                                        args=[self.webapp.app_slug]))
+        eq_(r.status_code, 200)
 
     def test_resume_without_checklist(self):
         r = self.client.get(reverse('submit.app.details',
@@ -1340,7 +1401,7 @@ class TestUpload(BaseUploadTest):
 
 
 class TestUploadDetail(BaseUploadTest):
-    fixtures = ['base/apps', 'base/appversion', 'base/users']
+    fixtures = ['base/apps', 'base/appversion', 'base/platforms', 'base/users']
 
     def setUp(self):
         super(TestUploadDetail, self).setUp()
@@ -1407,6 +1468,7 @@ class TestUploadDetail(BaseUploadTest):
                                               urlopen_mock):
         rs = mock.Mock()
         rs.read.return_value = self.file_content('mozball.owa')
+        rs.headers = {'Content-Type': 'application/x-web-app-manifest+json'}
         urlopen_mock.return_value = rs
         validator_mock.return_value = json.dumps(self.validation_ok())
         self.upload_file('mozball.owa')
@@ -1437,6 +1499,7 @@ class TestUploadDetail(BaseUploadTest):
         eq_(suite.attr('data-validateurl'),
             reverse('mkt.developers.standalone_upload_detail',
                     args=[upload.uuid]))
+        eq_(suite('#suite-results-tier-2').length, 1)
 
 
 def assert_json_error(request, field, msg):

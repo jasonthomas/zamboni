@@ -1,6 +1,7 @@
 import posixpath
 
 from django import http
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.cache import never_cache
 
@@ -54,7 +55,8 @@ def _find_version_page(qs, addon, version_num):
     url = reverse('addons.versions', args=[addon.slug])
     if version_num in ids:
         page = 1 + ids.index(version_num) / PER_PAGE
-        return redirect(urlparams(url, 'version-%s' % version_num, page=page))
+        to = urlparams(url, 'version-%s' % version_num, page=page)
+        return http.HttpResponseRedirect(to)
     else:
         raise http.Http404()
 
@@ -103,12 +105,12 @@ def download_watermarked(request, file_id):
             if not user:
                 log.debug('Watermarking denied, no user: %s, %s, %s'
                           % (file_id, email, hsh))
-                return http.HttpResponseForbidden()
+                raise PermissionDenied
 
         if not addon.has_purchased(user):
             log.debug('Watermarking denied, not purchased: %s, %s'
                       % (file_id, user.id))
-            return http.HttpResponseForbidden()
+            raise PermissionDenied
 
     dest = file.watermark(user)
     if not dest:
@@ -129,11 +131,12 @@ def download_file(request, file_id, type=None):
     addon = get_object_or_404(Addon.objects, pk=file.version.addon_id)
 
     if addon.is_premium():
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     if addon.is_disabled or file.status == amo.STATUS_DISABLED:
-        if acl.check_addon_ownership(request, addon, viewer=True,
-                                     ignore_disabled=True):
+        if (acl.check_addon_ownership(request, addon, viewer=True,
+                                      ignore_disabled=True) or
+            acl.check_reviewer(request)):
             return HttpResponseSendFile(request, file.guarded_file_path,
                                         content_type='application/xp-install')
         else:
@@ -168,4 +171,4 @@ def download_latest(request, addon, type='xpi', platform=None):
     url = posixpath.join(reverse(pattern, args=args), file.filename)
     if request.GET:
         url += '?' + request.GET.urlencode()
-    return redirect(url)
+    return http.HttpResponseRedirect(url)

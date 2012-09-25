@@ -2,6 +2,7 @@ import functools
 import os
 
 from django import http
+from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect
 
@@ -50,7 +51,7 @@ def owner_required(f=None, require_owner=True):
                                               require_owner=require_owner):
                 return func(request, collection, username, slug, *args, **kw)
             else:
-                return http.HttpResponseForbidden()
+                raise PermissionDenied
         return wrapper
     return decorator(f) if f else decorator
 
@@ -60,8 +61,9 @@ def legacy_redirect(request, uuid, edit=False):
     key = 'uuid' if len(uuid) == 36 else 'nickname'
     c = get_object_or_404(Collection.objects, **{key: uuid})
     if edit:
-        return redirect(c.edit_url())
-    return redirect(c.get_url_path() + '?' + request.GET.urlencode())
+        return http.HttpResponseRedirect(c.edit_url())
+    to = c.get_url_path() + '?' + request.GET.urlencode()
+    return http.HttpResponseRedirect(to)
 
 
 def legacy_directory_redirects(request, page):
@@ -75,7 +77,7 @@ def legacy_directory_redirects(request, page):
             loc = reverse('collections.user', args=[request.amo_user.username])
         elif page == 'favorites':
             loc = reverse('collections.following')
-    return redirect(loc)
+    return http.HttpResponseRedirect(loc)
 
 
 class CollectionFilter(BaseFilter):
@@ -178,10 +180,10 @@ class CollectionAddonFilter(BaseFilter):
 def collection_detail(request, username, slug):
     c = get_collection(request, username, slug)
     if not (c.listed or acl.check_collection_ownership(request, c)):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     if request.GET.get('format') == 'rss':
-        return redirect(c.feed_url(), permanent=True)
+        return http.HttpResponsePermanentRedirect(c.feed_url())
 
     base = Addon.objects.valid() & c.addons.all()
     filter = CollectionAddonFilter(request, base,
@@ -221,7 +223,7 @@ def collection_detail(request, username, slug):
 def collection_detail_json(request, username, slug):
     c = get_collection(request, username, slug)
     if not (c.listed or acl.check_collection_ownership(request, c)):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     addons = c.addons.valid()
     addons_dict = [addon_to_dict(a) for a in addons]
@@ -251,7 +253,7 @@ def get_notes(collection, raw=False):
 def collection_vote(request, username, slug, direction):
     c = get_collection(request, username, slug)
     if request.method != 'POST':
-        return redirect(c.get_url_path())
+        return http.HttpResponseRedirect(c.get_url_path())
 
     vote = {'up': 1, 'down': -1}[direction]
     qs = (CollectionVote.objects.using('default')
@@ -271,7 +273,7 @@ def collection_vote(request, username, slug, direction):
     if request.is_ajax():
         return http.HttpResponse()
     else:
-        return redirect(c.get_url_path())
+        return http.HttpResponseRedirect(c.get_url_path())
 
 
 def initial_data_from_request(request):
@@ -374,7 +376,7 @@ def collection_alter(request, username, slug, action):
 
 def change_addon(request, collection, action):
     if not acl.check_collection_ownership(request, collection):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     try:
         addon = get_object_or_404(Addon.objects, pk=request.POST['addon_id'])
@@ -389,7 +391,7 @@ def change_addon(request, collection, action):
         url = '%s?addon_id=%s' % (reverse('collections.ajax_list'), addon.id)
     else:
         url = collection.get_url_path()
-    return redirect(url)
+    return http.HttpResponseRedirect(url)
 
 
 @write
@@ -500,7 +502,7 @@ def edit_privacy(request, collection, username, slug):
     collection.save()
     log.info(u'%s changed privacy on collection %s' %
              (request.amo_user, collection.id))
-    return redirect(collection.get_url_path())
+    return http.HttpResponseRedirect(collection.get_url_path())
 
 
 @write
@@ -512,7 +514,7 @@ def delete(request, username, slug):
     if not acl.check_collection_ownership(request, collection, True):
         log.info(u'%s is trying to delete collection %s'
                  % (request.amo_user, collection.id))
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     data = dict(collection=collection, username=username, slug=slug)
 
@@ -545,7 +547,7 @@ def delete_icon(request, collection, username, slug):
         return {'icon': collection.icon_url}
     else:
         messages.success(request, _('Icon Deleted'))
-        return redirect(collection.edit_url())
+        return http.HttpResponseRedirect(collection.edit_url())
 
 
 @login_required
@@ -570,7 +572,7 @@ def watch(request, username, slug):
     if request.is_ajax():
         return {'watching': watching}
     else:
-        return redirect(collection.get_url_path())
+        return http.HttpResponseRedirect(collection.get_url_path())
 
 
 def share(request, username, slug):
@@ -598,4 +600,4 @@ def mine(request, slug=None):
         loc = reverse('collections.user', args=[username])
     else:
         loc = reverse('collections.detail', args=[username, slug])
-    return redirect(loc)
+    return http.HttpResponseRedirect(loc)

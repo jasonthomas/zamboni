@@ -3,6 +3,7 @@ from django.conf import settings
 from django.http import HttpRequest
 
 from cef import log_cef as _log_cef
+metlog = settings.METLOG
 
 
 class CEFLogger:
@@ -45,10 +46,13 @@ class CEFLogger:
         c = {'cef.product': getattr(settings, 'CEF_PRODUCT', 'AMO'),
              'cef.vendor': getattr(settings, 'CEF_VENDOR', 'Mozilla'),
              'cef.version': getattr(settings, 'CEF_VERSION', '0'),
-             'cef.device_version': getattr(settings, 'CEF_DEVICE_VERSION', '0'),
+             'cef.device_version': getattr(settings,
+                                           'CEF_DEVICE_VERSION',
+                                           '0'),
              'cef.file': getattr(settings, 'CEF_FILE', 'syslog'), }
-
-        kwargs = {'username': getattr(environ, 'amo_user', ''),
+        user = getattr(environ, 'amo_user', None)
+        kwargs = {'username': getattr(user, 'name', ''),
+                  'suid': str(getattr(user, 'pk', '')),
                   'signature': '%s%s' % (self.sig_prefix, msg.upper()),
                   'msg': longer, 'config': c,
                   'cs2': app, 'cs2Label': self.cs2label}
@@ -62,8 +66,13 @@ class CEFLogger:
 
         if isinstance(environ, HttpRequest):
             environ = environ.META.copy()
-        return _log_cef('%s %s' % (self.msg_prefix, msg), severity,
-                        environ, **kwargs)
+
+        if settings.USE_METLOG_FOR_CEF:
+            return metlog.cef('%s %s' % (self.msg_prefix, msg), severity,
+                            environ, **kwargs)
+        else:
+            return _log_cef('%s %s' % (self.msg_prefix, msg),
+                     severity, environ, **kwargs)
 
 
 class ReceiptCEFLogger(CEFLogger):

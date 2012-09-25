@@ -11,10 +11,8 @@ from access import acl
 from amo.helpers import absolutify
 from amo.urlresolvers import reverse
 from amo.utils import send_mail_jinja
-from editors.models import ReviewerScore
+from editors.models import EscalationQueue, RereviewQueue, ReviewerScore
 from files.models import File
-
-from .models import EscalationQueue, RereviewQueue
 
 
 log = commonware.log.getLogger('z.mailer')
@@ -153,6 +151,7 @@ class ReviewApp(ReviewBase):
         self.log_action(amo.LOG.APPROVE_VERSION_WAITING)
         self.notify_email('pending_to_public_waiting',
                           u'App Approved but waiting: %s')
+        self.addon.sign_if_packaged(self.version.pk)
 
         log.info(u'Making %s public but pending' % self.addon)
         log.info(u'Sending email for %s' % self.addon)
@@ -165,6 +164,9 @@ class ReviewApp(ReviewBase):
         if self.addon.status != amo.STATUS_PUBLIC:
             self.set_addon(status=amo.STATUS_PUBLIC,
                            highest_status=amo.STATUS_PUBLIC)
+        # Call update_version, so various other bits of data update.
+        self.addon.update_version()
+        self.addon.sign_if_packaged(self.version.pk)
 
         self.log_action(amo.LOG.APPROVE_VERSION)
         self.notify_email('pending_to_public', u'App Approved: %s')
@@ -176,9 +178,10 @@ class ReviewApp(ReviewBase):
         """Reject an app."""
         self.set_files(amo.STATUS_DISABLED, self.version.files.all(),
                        hide_disabled_file=True)
-        # If this app does not have any packaged apps or if there aren't other
-        # versions with already reviewed files, reject the app also.
-        if (not self.addon.has_packaged_files or
+        # If this app is not packaged (packaged apps can have multiple
+        # versions) or if there aren't other versions with already reviewed
+        # files, reject the app also.
+        if (not self.addon.is_packaged or
             not self.addon.versions.exclude(id=self.version.id)
                 .filter(files__status__in=amo.REVIEWED_STATUSES).exists()):
             self.set_addon(status=amo.STATUS_REJECTED)
@@ -323,18 +326,33 @@ class ReviewHelper(object):
         actions = SortedDict()
 
         file_status = self.version.files.values_list('status', flat=True)
+        multiple_versions = (File.objects.exclude(version=self.version)
+                                         .filter(
+                                             version__addon=self.addon,
+                                             status__in=amo.REVIEWED_STATUSES)
+                                         .exists())
 
         # Public.
-        if (self.addon.status != amo.STATUS_PUBLIC or
-            amo.STATUS_PUBLIC not in file_status):
+        if ((self.addon.is_packaged and amo.STATUS_PUBLIC not in file_status)
+            or (not self.addon.is_packaged and
+                self.addon.status != amo.STATUS_PUBLIC)):
             actions['public'] = public
 
         # Reject.
-        if (self.addon.status != amo.STATUS_REJECTED and
-            self.addon.status != amo.STATUS_DISABLED or (
-                amo.STATUS_REJECTED not in file_status and
-                amo.STATUS_DISABLED not in file_status)):
-            actions['reject'] = reject
+        if self.addon.is_packaged:
+            # Packaged apps reject the file only, or the app itself if there's
+            # only a single version.
+            if (not multiple_versions and
+                self.addon.status not in [amo.STATUS_REJECTED,
+                                          amo.STATUS_DISABLED]):
+                actions['reject'] = reject
+            elif multiple_versions and amo.STATUS_DISABLED not in file_status:
+                actions['reject'] = reject
+        else:
+            # Hosted apps reject the app itself.
+            if self.addon.status not in [amo.STATUS_REJECTED,
+                                         amo.STATUS_DISABLED]:
+                actions['reject'] = reject
 
         # Disable.
         if (acl.action_allowed(self.handler.request, 'Addons', 'Edit') and (

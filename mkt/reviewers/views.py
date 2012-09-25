@@ -1,39 +1,50 @@
+import collections
 import datetime
 import json
 import sys
 import traceback
 
+from django import http
 from django.conf import settings
+from django.forms.formsets import formset_factory
 from django.db.models import Q
-from django.shortcuts import redirect
+from django.shortcuts import get_object_or_404, redirect
+from django.utils.datastructures import MultiValueDictKeyError
 
+import commonware.log
 import jingo
 from tower import ugettext as _
 import requests
+from waffle.decorators import waffle_switch
 
 import amo
 from abuse.models import AbuseReport
 from access import acl
 from addons.decorators import addon_view
-from addons.models import Version
+from addons.models import Persona, Version
 from amo import messages
-from amo.decorators import json_view, permission_required
+from amo.decorators import json_view, permission_required, post_required
+from amo.helpers import absolutify
 from amo.urlresolvers import reverse
-from amo.utils import escape_all
-from amo.utils import paginate
+from amo.utils import (escape_all, HttpResponseSendFile, JSONEncoder, paginate,
+                       smart_decode)
 from editors.forms import MOTDForm
-from editors.models import EditorSubscription
+from editors.models import EditorSubscription, EscalationQueue, RereviewQueue
 from editors.views import reviewer_required
+from files.models import File
+import mkt.constants.reviewers as rvw
 from mkt.developers.models import ActivityLog
+from mkt.site.helpers import product_as_dict
 from mkt.webapps.models import Webapp
 from reviews.forms import ReviewFlagFormSet
 from reviews.models import Review, ReviewFlag
 from zadmin.models import get_config, set_config
 from . import forms
-from .models import AppCannedResponse, EscalationQueue, RereviewQueue
+from .models import AppCannedResponse, ThemeLock
 
 
 QUEUE_PER_PAGE = 100
+log = commonware.log.getLogger('z.reviewers')
 
 
 @reviewer_required
@@ -60,21 +71,36 @@ def queue_counts():
     excluded_ids = EscalationQueue.uncached.values_list('addon', flat=True)
 
     counts = {
-        'pending': Webapp.uncached.exclude(id__in=excluded_ids)
-                                  .filter(status=amo.WEBAPPS_UNREVIEWED_STATUS,
-                                          disabled_by_user=False)
-                                  .count(),
+        'pending': Webapp.uncached
+                         .exclude(id__in=excluded_ids)
+                         .filter(type=amo.ADDON_WEBAPP,
+                                 disabled_by_user=False,
+                                 status=amo.WEBAPPS_UNREVIEWED_STATUS)
+                         .count(),
         'rereview': RereviewQueue.uncached
                                  .exclude(addon__in=excluded_ids)
                                  .filter(addon__disabled_by_user=False)
                                  .count(),
+        # This will work as long as we disable files of existing unreviewed
+        # versions when a new version is uploaded.
+        'updates': File.uncached
+                       .exclude(version__addon__id__in=excluded_ids)
+                       .filter(version__addon__type=amo.ADDON_WEBAPP,
+                               version__addon__disabled_by_user=False,
+                               version__addon__is_packaged=True,
+                               version__addon__status=amo.STATUS_PUBLIC,
+                               status=amo.STATUS_PENDING)
+                       .count(),
         'escalated': EscalationQueue.uncached
                                     .filter(addon__disabled_by_user=False)
                                     .count(),
-        'moderated': Review.uncached.filter(reviewflag__isnull=False,
-                                            editorreview=True,
-                                            addon__type=amo.ADDON_WEBAPP)
+        'moderated': Review.uncached.filter(addon__type=amo.ADDON_WEBAPP,
+                                            reviewflag__isnull=False,
+                                            editorreview=True)
                                     .count(),
+        'themes': Persona.objects.no_cache()
+                                 .filter(addon__status=amo.STATUS_PENDING)
+                                 .count(),
     }
     rv = {}
     if isinstance(type, basestring):
@@ -174,6 +200,13 @@ def _review(request, addon):
                                .transform(Version.transformer_activity)
                                .transform(Version.transformer))
 
+    product_attrs = {
+        'product': json.dumps(
+            product_as_dict(request, addon, False, 'developer'),
+            cls=JSONEncoder),
+        'manifestUrl': addon.manifest_url,
+    }
+
     pager = paginate(request, versions, 10)
 
     num_pages = pager.paginator.num_pages
@@ -186,7 +219,7 @@ def _review(request, addon):
                   status_types=amo.STATUS_CHOICES, show_diff=show_diff,
                   allow_unchecking_files=allow_unchecking_files,
                   actions=actions, actions_minimal=actions_minimal,
-                  tab=queue_type)
+                  tab=queue_type, product_attrs=product_attrs)
 
     return jingo.render(request, 'reviewers/review.html', ctx)
 
@@ -197,17 +230,15 @@ def app_review(request, addon):
     return _review(request, addon)
 
 
-def _queue(request, qs, tab, pager_processor=None):
-    per_page = request.GET.get('per_page', QUEUE_PER_PAGE)
-    pager = paginate(request, qs, per_page)
+QueuedApp = collections.namedtuple('QueuedApp', 'app created')
 
-    if pager_processor:
-        addons = pager_processor(pager)
-    else:
-        addons = pager.object_list
+
+def _queue(request, apps, tab, pager_processor=None):
+    per_page = request.GET.get('per_page', QUEUE_PER_PAGE)
+    pager = paginate(request, apps, per_page)
 
     return jingo.render(request, 'reviewers/queue.html', context(**{
-        'addons': addons,
+        'addons': pager.object_list,
         'pager': pager,
         'tab': tab,
     }))
@@ -216,30 +247,54 @@ def _queue(request, qs, tab, pager_processor=None):
 @permission_required('Apps', 'Review')
 def queue_apps(request):
     excluded_ids = EscalationQueue.uncached.values_list('addon', flat=True)
-    qs = (Webapp.uncached.filter(status=amo.WEBAPPS_UNREVIEWED_STATUS)
+    qs = (Webapp.uncached.filter(type=amo.ADDON_WEBAPP,
+                                 disabled_by_user=False,
+                                 status=amo.WEBAPPS_UNREVIEWED_STATUS)
                          .exclude(id__in=excluded_ids)
-                         .filter(disabled_by_user=False)
                          .order_by('created'))
-    return _queue(request, qs, 'pending')
+    apps = [QueuedApp(app, app.created) for app in qs]
+
+    return _queue(request, apps, 'pending')
 
 
 @permission_required('Apps', 'Review')
 def queue_rereview(request):
     excluded_ids = EscalationQueue.uncached.values_list('addon', flat=True)
     qs = (RereviewQueue.uncached
+                       .filter(addon__type=amo.ADDON_WEBAPP,
+                               addon__disabled_by_user=False)
                        .exclude(addon__in=excluded_ids)
-                       .filter(addon__disabled_by_user=False)
                        .order_by('created'))
-    return _queue(request, qs, 'rereview',
-                  lambda p: [r.addon for r in p.object_list])
+    apps = [QueuedApp(rq.addon, rq.created) for rq in qs]
+
+    return _queue(request, apps, 'rereview')
+
+
+@permission_required('Apps', 'Review')
+def queue_updates(request):
+    excluded_ids = EscalationQueue.uncached.values_list('addon', flat=True)
+    addon_ids = (File.objects.filter(status=amo.STATUS_PENDING,
+                                     version__addon__is_packaged=True,
+                                     version__addon__status=amo.STATUS_PUBLIC,
+                                     version__addon__type=amo.ADDON_WEBAPP,
+                                     version__addon__disabled_by_user=False)
+                             .values_list('version__addon_id', flat=True))
+    qs = (Webapp.uncached.exclude(id__in=excluded_ids)
+                         .filter(id__in=addon_ids))
+    apps = Webapp.version_and_file_transformer(qs)
+    apps = [QueuedApp(app, app.all_versions[0].all_files[0].created)
+            for app in qs]
+    apps = sorted(apps, key=lambda a: a.created)
+    return _queue(request, apps, 'updates')
 
 
 @permission_required('Apps', 'ReviewEscalated')
 def queue_escalated(request):
-    qs = (EscalationQueue.uncached.filter(addon__disabled_by_user=False)
+    qs = (EscalationQueue.uncached.filter(addon__type=amo.ADDON_WEBAPP,
+                                          addon__disabled_by_user=False)
                          .order_by('created'))
-    return _queue(request, qs, 'escalated',
-                  lambda p: [r.addon for r in p.object_list])
+    apps = [QueuedApp(eq.addon, eq.created) for eq in qs]
+    return _queue(request, apps, 'escalated')
 
 
 @permission_required('Apps', 'Review')
@@ -292,7 +347,7 @@ def logs(request):
                     Q(user__display_name__icontains=term) |
                     Q(user__username__icontains=term)).distinct()
 
-    pager = amo.utils.paginate(request, approvals, 50)
+    pager = paginate(request, approvals, 50)
     data = context(form=form, pager=pager, ACTION_DICT=amo.LOG_BY_ID)
     return jingo.render(request, 'reviewers/logs.html', data)
 
@@ -304,8 +359,8 @@ def motd(request):
     if acl.action_allowed(request, 'AppReviewerMOTD', 'Edit'):
         form = MOTDForm(request.POST or None, initial={'motd': motd})
     if form and request.method == 'POST' and form.is_valid():
-            set_config(u'mkt_reviewers_motd', form.cleaned_data['motd'])
-            return redirect(reverse('reviewers.apps.motd'))
+        set_config(u'mkt_reviewers_motd', form.cleaned_data['motd'])
+        return redirect(reverse('reviewers.apps.motd'))
     data = context(form=form)
     return jingo.render(request, 'reviewers/motd.html', data)
 
@@ -314,21 +369,61 @@ def motd(request):
 @addon_view
 @json_view
 def app_view_manifest(request, addon):
-    content, headers = '', {}
-    if addon.manifest_url:
-        try:
-            req = requests.get(addon.manifest_url, verify=False)
-            content, headers = req.content, req.headers
-        except Exception:
-            content = ''.join(traceback.format_exception(*sys.exc_info()))
+    if addon.is_packaged:
+        version = addon.versions.latest()
+        content = json.dumps(json.loads(_mini_manifest(addon, version.id)),
+                             indent=4)
+        return escape_all({'content': content, 'headers': ''})
 
-        try:
-            # Reindent the JSON.
-            content = json.dumps(json.loads(content), indent=4)
-        except:
-            # If it's not valid JSON, just return the content as is.
-            pass
-    return escape_all({'content': content, 'headers': headers})
+    else:  # Show the hosted manifest_url.
+        content, headers = u'', {}
+        if addon.manifest_url:
+            try:
+                req = requests.get(addon.manifest_url, verify=False)
+                content, headers = req.content, req.headers
+            except Exception:
+                content = u''.join(traceback.format_exception(*sys.exc_info()))
+
+            try:
+                # Reindent the JSON.
+                content = json.dumps(json.loads(content), indent=4)
+            except:
+                # If it's not valid JSON, just return the content as is.
+                pass
+        return escape_all({'content': smart_decode(content),
+                           'headers': headers})
+
+
+@permission_required('Apps', 'Review')
+@addon_view
+def mini_manifest(request, addon, version_id):
+    return http.HttpResponse(
+        _mini_manifest(addon, version_id),
+        content_type='application/x-web-app-manifest+json')
+
+
+def _mini_manifest(addon, version_id):
+    if not addon.is_packaged:
+        raise http.Http404
+
+    version = get_object_or_404(addon.versions, pk=version_id)
+    file_ = version.all_files[0]
+    manifest = addon.get_manifest_json(file_)
+
+    data = {
+        'name': addon.name,
+        'version': version.version,
+        'size': file_.size,
+        'release_notes': version.releasenotes,
+        'package_path': absolutify(
+            reverse('reviewers.signed', args=[addon.app_slug, version.id]))
+    }
+    if 'icons' in manifest:
+        data['icons'] = manifest['icons']
+    if 'locales' in manifest:
+        data['locales'] = manifest['locales']
+
+    return json.dumps(data, cls=JSONEncoder)
 
 
 @permission_required('Apps', 'Review')
@@ -336,6 +431,277 @@ def app_view_manifest(request, addon):
 def app_abuse(request, addon):
     reports = AbuseReport.objects.filter(addon=addon).order_by('-created')
     total = reports.count()
-    reports = amo.utils.paginate(request, reports, count=total)
+    reports = paginate(request, reports, count=total)
     return jingo.render(request, 'reviewers/abuse.html',
                         context(addon=addon, reports=reports, total=total))
+
+
+@waffle_switch('mkt-themes')
+@reviewer_required('persona')
+def themes_queue(request):
+    reviewer = request.amo_user
+    theme_locks = ThemeLock.objects.filter(reviewer=reviewer)
+    theme_locks_count = theme_locks.count()
+
+    if theme_locks_count < rvw.THEME_INITIAL_LOCKS:
+        themes = get_themes(reviewer,
+            rvw.THEME_INITIAL_LOCKS - theme_locks_count)
+    else:
+        # Update the expiry on currently checked-out themes.
+        theme_locks.update(expiry=get_updated_expiry())
+    # Combine currently checked-out themes with newly checked-out ones by
+    # re-evaluating theme_locks.
+    themes = [theme_lock.theme for theme_lock in theme_locks]
+
+    ThemeReviewFormset = formset_factory(forms.ThemeReviewForm)
+    formset = ThemeReviewFormset(
+        initial=[{'theme': theme.id} for theme in themes])
+
+    # By default, redirect back to the queue after a commit.
+    request.session['theme_redirect_url'] = reverse('reviewers.themes.'
+                                                    'queue_themes')
+
+    return jingo.render(request, 'reviewers/themes/queue.html', context(
+    **{
+        'formset': formset,
+        'theme_formsets': zip(themes, formset),
+        'reject_reasons': rvw.THEME_REJECT_REASONS.items(),
+        'theme_count': len(themes),
+        'max_locks': rvw.THEME_MAX_LOCKS,
+        'more_url': reverse('reviewers.themes.more'),
+        'actions': rvw.REVIEW_ACTIONS,
+        'reviewable': True,
+        'queue_counts': queue_counts(),
+        'actions': get_actions_json(),
+    }))
+
+
+def get_themes(reviewer, num):
+    # Check out themes from the pool if none or not enough checked out.
+    themes = Persona.objects.no_cache().filter(
+        addon__status=amo.STATUS_PENDING, themelock=None)[:num]
+
+    # Set a lock on the checked-out themes
+    expiry = get_updated_expiry()
+    for theme in list(themes):
+        ThemeLock.objects.create(theme=theme, reviewer=reviewer,
+                                 expiry=expiry)
+
+    # Empty pool? Go look for some expired locks.
+    if not themes:
+        expired_locks = (ThemeLock.objects
+            .filter(expiry__lte=datetime.datetime.now())
+            [:rvw.THEME_INITIAL_LOCKS])
+        # Steal expired locks.
+        for theme_lock in expired_locks:
+            theme_lock.reviewer = reviewer
+            theme_lock.expiry = expiry
+            theme_lock.save()
+            themes = [theme_lock.theme for theme_lock
+                      in expired_locks]
+    return themes
+
+
+@waffle_switch('mkt-themes')
+@post_required
+@reviewer_required('persona')
+def themes_commit(request):
+    reviewer = request.amo_user
+    ThemeReviewFormset = formset_factory(forms.ThemeReviewForm)
+    formset = ThemeReviewFormset(request.POST)
+
+    for form in formset:
+        try:
+            theme_lock = ThemeLock.objects.filter(
+                theme_id=form.data[form.prefix + '-theme'],
+                reviewer=reviewer)
+        except MultiValueDictKeyError:
+            # Address off-by-one error caused by management form.
+            continue
+        if theme_lock and form.is_valid():
+            form.save()
+
+    if 'theme_redirect_url' in request.session:
+        return redirect(request.session['theme_redirect_url'])
+    else:
+        return redirect(reverse('reviewers.themes.queue_themes'))
+
+
+@json_view
+@reviewer_required('persona')
+def themes_more(request):
+    reviewer = request.amo_user
+    theme_locks = ThemeLock.objects.filter(reviewer=reviewer)
+    theme_locks_count = theme_locks.count()
+
+    # Maximum number of locks.
+    if theme_locks_count >= rvw.THEME_MAX_LOCKS:
+        return {
+            'themes': [],
+            'message': _('You have reached the maximum number of Themes to '
+                         'review at once. Please commit your outstanding '
+                         'reviews.')}
+
+    # Logic to not take over than the max number of locks. If the next checkout
+    # round would cause the reviewer to go over the max, ask for fewer themes
+    # from get_themes.
+    if theme_locks_count > rvw.THEME_MAX_LOCKS - rvw.THEME_INITIAL_LOCKS:
+        wanted_locks = rvw.THEME_MAX_LOCKS - theme_locks_count
+    else:
+        wanted_locks = rvw.THEME_INITIAL_LOCKS
+    themes = get_themes(reviewer, wanted_locks)
+
+    # Create forms, which will need to be manipulated to fit with the currently
+    # existing forms.
+    ThemeReviewFormset = formset_factory(forms.ThemeReviewForm)
+    formset = ThemeReviewFormset(
+        initial=[{'theme': theme.id} for theme in themes])
+
+    html = jingo.render(request, 'reviewers/themes/themes.html', {
+        'theme_formsets': zip(themes, formset),
+        'max_locks': rvw.THEME_MAX_LOCKS,
+        'reviewable': True,
+        'initial_count': theme_locks_count
+    }).content
+
+    return {'html': html,
+            'count': ThemeLock.objects.filter(reviewer=reviewer).count()}
+
+
+@waffle_switch('mkt-themes')
+@reviewer_required('persona')
+def themes_single(request, slug):
+    """
+    Like a detail page, manually review a single theme if it is pending
+    and isn't locked.
+    """
+    reviewer = request.amo_user
+    reviewable = True
+
+    # Don't review an already reviewed theme.
+    theme = get_object_or_404(Persona, addon__slug=slug)
+    if theme.addon.status != amo.STATUS_PENDING:
+        reviewable = False
+
+    # Don't review a locked theme (that's not locked to self).
+    try:
+        theme_lock = theme.themelock
+        if (theme_lock.reviewer.id != reviewer.id and
+            theme_lock.expiry > datetime.datetime.now()):
+            reviewable = False
+        elif (theme_lock.reviewer.id != reviewer.id and
+             theme_lock.expiry < datetime.datetime.now()):
+            # Steal expired lock.
+            theme_lock.reviewer = reviewer,
+            theme_lock.expiry = get_updated_expiry()
+            theme_lock.save()
+        else:
+            # Update expiry.
+            theme_lock.expiry = get_updated_expiry()
+            theme_lock.save()
+    except ThemeLock.DoesNotExist:
+        # Create lock if not created.
+        ThemeLock.objects.create(theme=theme, reviewer=reviewer,
+                                 expiry=get_updated_expiry())
+
+    ThemeReviewFormset = formset_factory(forms.ThemeReviewForm)
+    formset = ThemeReviewFormset(initial=[{'theme': theme.id}])
+
+    # Since we started the review on the single page, we want to return to the
+    # single page rather than get shot back to the queue.
+    request.session['theme_redirect_url'] = reverse('reviewers.themes.single',
+        args=[theme.addon.slug])
+
+    return jingo.render(request, 'reviewers/themes/single.html', context(
+    **{
+        'formset': formset,
+        'theme': theme,
+        'theme_formsets': zip([theme], formset),
+        'theme_reviews': paginate(request, ActivityLog.objects.filter(
+            action=amo.LOG.THEME_REVIEW.id,
+            _arguments__contains=theme.addon.id)),
+        'max_locks': 0,  # Setting this to 0 makes sure more Themes aren't
+                         # loaded from more().
+        'actions': get_actions_json(),
+        'theme_count': 1,
+        'reviewable': reviewable,
+        'reject_reasons': rvw.THEME_REJECT_REASONS.items(),
+        'action_dict': rvw.REVIEW_ACTIONS,
+    }))
+
+
+@waffle_switch('mkt-themes')
+@reviewer_required('persona')
+def themes_logs(request):
+    data = request.GET.copy()
+
+    if not data.get('start') and not data.get('end'):
+        today = datetime.date.today()
+        data['start'] = datetime.date(today.year, today.month, 1)
+
+    form = forms.ReviewAppLogForm(data)
+
+    theme_logs = ActivityLog.objects.filter(
+        action=amo.LOG.THEME_REVIEW.id)
+
+    if form.is_valid():
+        data = form.cleaned_data
+        if data.get('start'):
+            theme_logs = theme_logs.filter(created__gte=data['start'])
+        if data.get('end'):
+            theme_logs = theme_logs.filter(created__lt=data['end'])
+        if data.get('search'):
+            term = data['search']
+            theme_logs = theme_logs.filter(
+                    Q(_details__icontains=term) |
+                    Q(user__display_name__icontains=term) |
+                    Q(user__username__icontains=term)).distinct()
+
+    pager = paginate(request, theme_logs, 30)
+    data = context(form=form, pager=pager, ACTION_DICT=rvw.REVIEW_ACTIONS)
+    return jingo.render(request, 'reviewers/themes/logs.html', data)
+
+
+@waffle_switch('mkt-themes')
+@reviewer_required('persona')
+def themes_history(request, username):
+    if not username:
+        username = request.amo_user.username
+
+    return jingo.render(request, 'reviewers/themes/history.html', context(
+    **{
+        'theme_reviews': paginate(request, ActivityLog.objects.filter(
+                                    action=amo.LOG.THEME_REVIEW.id,
+                                    user__username=username), 20),
+        'user_history': True,
+        'username': username,
+        'reject_reasons': rvw.THEME_REJECT_REASONS.items(),
+        'action_dict': rvw.REVIEW_ACTIONS,
+    }))
+
+
+def get_actions_json():
+    return json.dumps({
+        'moreinfo': rvw.ACTION_MOREINFO,
+        'flag': rvw.ACTION_FLAG,
+        'duplicate': rvw.ACTION_DUPLICATE,
+        'reject': rvw.ACTION_REJECT,
+        'approve': rvw.ACTION_APPROVE,
+    })
+
+
+def get_updated_expiry():
+    return (datetime.datetime.now() +
+            datetime.timedelta(minutes=rvw.THEME_LOCK_EXPIRY))
+
+
+@permission_required('Apps', 'Review')
+@addon_view
+def get_signed_packaged(request, addon, version_id):
+    get_object_or_404(addon.versions, pk=version_id)
+    path = addon.sign_if_packaged(version_id, reviewer=True)
+    if not path:
+        raise http.Http404
+    log.info('Returning signed package addon: %s, version: %s' %
+             (addon.pk, version_id))
+    return HttpResponseSendFile(request, path, content_type='application/zip')

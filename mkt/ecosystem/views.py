@@ -4,7 +4,7 @@ import commonware.log
 import jingo
 
 from .models import MdnCache
-from .tasks import locales, refresh_mdn_cache, tutorials
+from .tasks import locales
 
 
 log = commonware.log.getLogger('z.ecosystem')
@@ -15,39 +15,16 @@ def landing(request):
     return jingo.render(request, 'ecosystem/landing.html')
 
 
-def developers(request):
-    """Landing page for developers."""
-    return jingo.render(request, 'ecosystem/developers.html')
-
-
-def building_blocks(request):
-    """Landing page for developers."""
-    return jingo.render(request,
-        'ecosystem/mdn_documentation/building_blocks.html')
-
-
-def building_xtag(request, xtag=None):
-    """Page for using a particular x-tag.
-    The process of generating the x-tag title is temporary as these pages
-    are not yet on MDN. Once they are officially on there, then we can pull
-    everything directly from the database instead.
-    """
-
-    if not xtag:
-        xtag = 'list'
-
-    return jingo.render(request, 'ecosystem/design/xtag_%s.html' % xtag,
-                        {'title': xtag.replace('_', ' ').capitalize()})
-
-
 def partners(request):
     """Landing page for partners."""
-    return jingo.render(request, 'ecosystem/partners.html')
+    return jingo.render(request, 'ecosystem/partners.html',
+           {'page': 'partners', 'category': 'publish'})
 
 
 def support(request):
     """Landing page for support."""
-    return jingo.render(request, 'ecosystem/support.html')
+    return jingo.render(request, 'ecosystem/support.html',
+           {'page': 'support', 'category': 'build'})
 
 
 def documentation(request, page=None):
@@ -64,22 +41,21 @@ def documentation(request, page=None):
 
     data = get_object_or_404(MdnCache, name=page, locale=locale)
 
+    if page in ('html5', 'manifests', 'manifest_faq', 'firefox_os',
+                'tutorial_general', 'tutorial_weather', 'tutorial_serpent',
+                'devtools', 'templates'):
+        category = 'build'
+    elif page in ('principles', 'purpose', 'patterns', 'references',
+                  'custom_elements'):
+        category = 'design'
+    else:
+        category = 'publish'
+
     ctx = {
         'page': page,
         'title': data.title,
         'content': data.content,
+        'category': category
     }
 
-    page_name = 'index.html'
-
-    if page in ['design_guidelines', 'purpose_of_your_app',
-                'design_principles', 'navigation', 'resources', 'layout',
-                'design_patterns']:
-        page_name = 'design.html'
-    elif page in ['devtools', 'templates', 'web_components']:
-        page_name = 'sdk.html'
-    elif page in ['mkt_hosting', 'mkt_submission']:
-        page_name = 'publish_it.html'
-
-    return jingo.render(request, 'ecosystem/mdn_documentation/%s' %
-                        page_name, ctx)
+    return jingo.render(request, 'ecosystem/documentation.html', ctx)

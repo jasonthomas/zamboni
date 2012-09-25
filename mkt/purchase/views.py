@@ -5,7 +5,7 @@ import uuid
 from django import http
 from django.conf import settings
 from django.db.models import Q
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 
 import commonware.log
@@ -21,10 +21,10 @@ from addons.decorators import (addon_view_factory, can_be_purchased,
 from lib.pay_server import client
 from market.forms import PriceCurrencyForm
 from market.models import AddonPurchase
-import paypal
-from stats.models import ClientData, Contribution
 from mkt.account.views import preapproval as user_preapproval
 from mkt.webapps.models import Webapp
+import paypal
+from stats.models import ClientData, Contribution
 
 log = commonware.log.getLogger('z.purchase')
 addon_view = addon_view_factory(qs=Webapp.objects.valid)
@@ -39,8 +39,8 @@ def start_purchase(request, addon):
     contrib_for = (_(u'Firefox Marketplace purchase of {0}')
                    .format(addon.name))
 
-    # Default is USD.
-    amount, currency = addon.premium.get_price(), 'USD'
+    amount, currency = (addon.premium.get_price(),
+                        request.REGION.default_currency)
 
     # If tier is specified, then let's look it up.
     if waffle.switch_is_active('currencies'):
@@ -49,13 +49,6 @@ def start_purchase(request, addon):
             tier = form.get_tier()
             if tier:
                 amount, currency = tier.price, tier.currency
-
-    if waffle.flag_is_active(request, 'solitude-payments'):
-        # TODO(solitude): when the migration of data is completed, we
-        # will be able to remove this. Seller data is populated in solitude
-        # on submission or devhub changes. If those don't occur, you won't be
-        # able to sell at all.
-        client.create_seller_for_pay(addon)
 
     return amount, currency, uuid_, contrib_for
 
@@ -195,10 +188,10 @@ def purchase(request, addon):
 
     # This is the non-Ajax fallback.
     if status != 'COMPLETED':
-        return redirect(url)
+        return http.HttpResponseRedirect(url)
 
     messages.success(request, _('Purchase complete'))
-    return redirect(addon.get_detail_url())
+    return http.HttpResponseRedirect(addon.get_detail_url())
 
 
 @csrf_exempt

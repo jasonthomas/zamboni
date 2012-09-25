@@ -1,3 +1,4 @@
+from itertools import repeat
 import json
 import os
 import tempfile
@@ -27,9 +28,11 @@ from lib.video.tests import files as video_files
 from users.models import UserProfile
 
 import mkt
+from mkt.constants import APP_IMAGE_SIZES
 from mkt.constants.ratingsbodies import RATINGS_BODIES
 from mkt.developers.models import ActivityLog
-from mkt.webapps.models import AddonExcludedRegion as AER, ContentRating
+from mkt.webapps.models import (AddonExcludedRegion as AER, ContentRating,
+                                ImageAsset)
 
 response_mock = mock.Mock()
 response_mock.read.return_value = '''
@@ -47,6 +50,8 @@ response_mock.read.return_value = '''
         "installs_allowed_from": [ "https://marketplace.mozilla.org" ]
     }
 '''
+response_mock.headers = {'Content-Type':
+                         'application/x-web-app-manifest+json'}
 
 
 def get_section_url(addon, section, edit=False):
@@ -542,14 +547,20 @@ class TestEditMedia(TestEdit):
         blank.update(**kw)
         return blank
 
-    def formset_media(self, blank_kw=None, *args, **kw):
-        blank_kw = blank_kw or {}
+    def formset_media(self, prev_blank=None, *args, **kw):
+        prev_blank = prev_blank or {}
         kw.setdefault('initial_count', 0)
         kw.setdefault('prefix', 'files')
 
-        fs = formset(*[a for a in args] + [self.formset_new_form(**blank_kw)],
-                     **kw)
-        return dict([(k, '' if v is None else v) for k, v in fs.items()])
+        # Preview formset
+        fs = formset(*list(args) + [self.formset_new_form(**prev_blank)], **kw)
+
+        # Image asset formset
+        assets = len(APP_IMAGE_SIZES)
+        kw = {'initial_count': assets, 'prefix': 'images'}
+        fs.update(formset(*repeat({'upload_hash': ''}, assets), **kw))
+
+        return dict((k, '' if v is None else v) for k, v in fs.items())
 
     def new_preview_hash(self):
         # At least one screenshot is required.
@@ -563,7 +574,7 @@ class TestEditMedia(TestEdit):
 
     def test_edit_defaulticon(self):
         data = dict(icon_type='')
-        data_formset = self.formset_media(blank_kw=self.new_preview_hash(),
+        data_formset = self.formset_media(prev_blank=self.new_preview_hash(),
                                           **data)
 
         r = self.client.post(self.edit_url, data_formset)
@@ -578,7 +589,7 @@ class TestEditMedia(TestEdit):
 
     def test_edit_preuploadedicon(self):
         data = dict(icon_type='icon/appearance')
-        data_formset = self.formset_media(blank_kw=self.new_preview_hash(),
+        data_formset = self.formset_media(prev_blank=self.new_preview_hash(),
                                           **data)
 
         r = self.client.post(self.edit_url, data_formset)
@@ -592,7 +603,7 @@ class TestEditMedia(TestEdit):
             eq_(unicode(getattr(webapp, k)), data[k])
 
     def test_edit_uploadedicon(self):
-        img = get_image_path('mozilla.png')
+        img = get_image_path('mozilla-sq.png')
         src_image = open(img, 'rb')
 
         response = self.client.post(self.icon_upload,
@@ -603,7 +614,7 @@ class TestEditMedia(TestEdit):
         # Now, save the form so it gets moved properly.
         data = dict(icon_type='image/png',
                     icon_upload_hash=response_json['upload_hash'])
-        data_formset = self.formset_media(blank_kw=self.new_preview_hash(),
+        data_formset = self.formset_media(prev_blank=self.new_preview_hash(),
                                           **data)
 
         r = self.client.post(self.edit_url, data_formset)
@@ -624,7 +635,7 @@ class TestEditMedia(TestEdit):
 
         eq_(storage.exists(dest), True)
 
-        eq_(Image.open(storage.open(dest)).size, (32, 12))
+        eq_(Image.open(storage.open(dest)).size, (32, 32))
 
     def test_edit_icon_log(self):
         self.test_edit_uploadedicon()
@@ -633,7 +644,7 @@ class TestEditMedia(TestEdit):
         eq_(log[0].action, amo.LOG.CHANGE_ICON.id)
 
     def test_edit_uploadedicon_noresize(self):
-        img = '%s/img/notifications/error.png' % settings.MEDIA_ROOT
+        img = '%s/img/mkt/logos/128.png' % settings.MEDIA_ROOT
         src_image = open(img, 'rb')
 
         data = dict(upload_image=src_image)
@@ -645,7 +656,7 @@ class TestEditMedia(TestEdit):
         # Now, save the form so it gets moved properly.
         data = dict(icon_type='image/png',
                     icon_upload_hash=response_json['upload_hash'])
-        data_formset = self.formset_media(blank_kw=self.new_preview_hash(),
+        data_formset = self.formset_media(prev_blank=self.new_preview_hash(),
                                           **data)
 
         r = self.client.post(self.edit_url, data_formset)
@@ -664,9 +675,9 @@ class TestEditMedia(TestEdit):
                                '%s' % (webapp.id / 1000))
         dest = os.path.join(dirname, '%s-64.png' % webapp.id)
 
-        assert storage.exists(dest)
+        assert storage.exists(dest), dest
 
-        eq_(Image.open(storage.open(dest)).size, (48, 48))
+        eq_(Image.open(storage.open(dest)).size, (64, 64))
 
     def test_no_video_types(self):
         res = self.client.get(self.get_url('media', edit=True))
@@ -685,11 +696,15 @@ class TestEditMedia(TestEdit):
 
     def check_image_type(self, url, msg):
         img = '%s/js/zamboni/devhub.js' % settings.MEDIA_ROOT
+        self.check_image_type_path(img, url, msg)
+
+    def check_image_type_path(self, img, url, msg):
         src_image = open(img, 'rb')
 
         res = self.client.post(url, {'upload_image': src_image})
         response_json = json.loads(res.content)
-        eq_(response_json['errors'][0], msg)
+        assert any(e == msg for e in response_json['errors']), (
+            response_json['errors'])
 
     # The check_image_type method uploads js, so let's try sending that
     # to ffmpeg to see what it thinks.
@@ -720,6 +735,11 @@ class TestEditMedia(TestEdit):
         open(self.preview.thumbnail_path, 'w')
 
         self.url = self.webapp.get_dev_url('ajax.image.status')
+
+    def test_icon_square(self):
+        img = get_image_path('mozilla.png')
+        self.check_image_type_path(img, self.icon_upload,
+                                   'Icons must be square.')
 
     def test_icon_status_no_choice(self):
         self.webapp.update(icon_type='')
@@ -768,12 +788,20 @@ class TestEditMedia(TestEdit):
         result = json.loads(self.client.get(self.url).content)
         assert result['icons']
 
+    def test_icon_size_req(self):
+        filehandle = open(get_image_path('sunbird-small.png'), 'rb')
+
+        res = self.client.post(self.icon_upload, {'upload_image': filehandle})
+        response_json = json.loads(res.content)
+        assert any(e == 'Icons must be at least 128px by 128px.' for e in
+                   response_json['errors'])
+
     def check_image_animated(self, url, msg):
         filehandle = open(get_image_path('animated.png'), 'rb')
 
         res = self.client.post(url, {'upload_image': filehandle})
         response_json = json.loads(res.content)
-        eq_(response_json['errors'][0], msg)
+        assert any(e == msg for e in response_json['errors'])
 
     def test_icon_animated(self):
         self.check_image_animated(self.icon_upload,
@@ -816,7 +844,8 @@ class TestEditMedia(TestEdit):
     def test_edit_preview_video_add_hash(self):
         Switch.objects.create(name='video-upload', active=True)
         res = self.add_json(open(video_files['good'], 'rb'))
-        assert res['upload_hash'].endswith('.video-webm')
+        assert not res['errors'], res['errors']
+        assert res['upload_hash'].endswith('.video-webm'), res['upload_hash']
 
     def test_edit_preview_video_add_hash_switch_off(self):
         res = self.add_json(open(video_files['good'], 'rb'))
@@ -830,7 +859,8 @@ class TestEditMedia(TestEdit):
     def test_edit_preview_video_size(self):
         Switch.objects.create(name='video-upload', active=True)
         res = self.add_json(open(video_files['good'], 'rb'))
-        assert res['errors'][0].startswith('Please use')
+        assert any(e.startswith('Please use') for e in res['errors']), (
+                res['errors'])
 
     @mock.patch('lib.video.tasks.resize_video')
     def test_edit_preview_video_add(self, resize_video):
@@ -844,6 +874,29 @@ class TestEditMedia(TestEdit):
     def test_edit_preview_add(self):
         self.preview_add()
         eq_(str(self.get_webapp().previews.all()[0].caption), 'hi')
+
+    def imageasset_set(self, id=0):
+        # Generate the proper form: a blank preview entry (that won't get
+        # saved) and add an upload hash to the image asset so it WILL get
+        # saved.
+        preview = self.get_webapp().previews.all()[0]
+        edited = {'upload_hash': '', 'id': preview.id}
+        data_formset = self.formset_media(edited, initial_count=1)
+        data_formset['images-%d-upload_hash' % id] = self.new_preview_hash()
+
+        r = self.client.post(self.edit_url, data_formset)
+        self.assertNoFormErrors(r)
+
+    def test_edit_imageasset_add(self):
+        assets_before = ImageAsset.objects.count()
+        self.preview_add()
+        eq_(assets_before, ImageAsset.objects.count())
+
+        self.imageasset_set(0)
+        eq_(assets_before + 1, ImageAsset.objects.count())
+
+        self.imageasset_set(1)
+        eq_(assets_before + 2, ImageAsset.objects.count())
 
     def test_edit_preview_edit(self):
         self.preview_add()
@@ -861,6 +914,14 @@ class TestEditMedia(TestEdit):
         previews = self.get_webapp().previews
         eq_(str(previews.all()[0].caption), 'bye')
         eq_(previews.count(), 1)
+
+    def test_edit_imageasset_edit(self):
+        self.preview_add()
+        self.imageasset_set(0)
+        assets_before = ImageAsset.objects.count()
+
+        self.imageasset_set(0)
+        eq_(assets_before, ImageAsset.objects.count())
 
     def test_edit_preview_reorder(self):
         self.preview_add(3)
@@ -1020,33 +1081,33 @@ class TestEditDetails(TestEdit):
                  'You are missing %s.')
         missing = lambda f: error % ', '.join(map(repr, f))
 
-        data.update(default_locale='fr')
+        data.update(default_locale='pt-BR')
         r = self.client.post(self.edit_url, data)
         self.assertFormError(r, 'form', None, missing(fields))
 
         # Now we have a name.
-        self.webapp.name = {'fr': 'fr name'}
+        self.webapp.name = {'pt-BR': 'pt-BR name'}
         self.webapp.save()
         fields.remove('name')
         r = self.client.post(self.edit_url, data)
         self.assertFormError(r, 'form', None, missing(fields))
 
         # Now we have a summary.
-        self.webapp.summary = {'fr': 'fr summary'}
+        self.webapp.summary = {'pt-BR': 'pt-BR summary'}
         self.webapp.save()
         fields.remove('summary')
         r = self.client.post(self.edit_url, data)
         self.assertFormError(r, 'form', None, missing(fields))
 
         # Now we're sending an fr description with the form.
-        data['description_fr'] = 'fr description'
+        data['description_pt-BR'] = 'pt-BR description'
         r = self.client.post(self.edit_url, data)
         self.assertNoFormErrors(r)
 
     def test_edit_default_locale_frontend_error(self):
         data = self.get_dict()
         data.update(description='xx', homepage='http://google.com',
-                    default_locale='fr', privacy_policy='pp')
+                    default_locale='pt-BR', privacy_policy='pp')
         rp = self.client.post(self.edit_url, data)
         self.assertContains(rp,
             'Before changing your default locale you must')
@@ -1070,16 +1131,18 @@ class TestEditDetails(TestEdit):
         self.skip_if_disabled(settings.REGION_STORES)
         r = self.client.get(self.url)
         eq_(strip_whitespace(pq(r.content)('#regions').text()),
-            ', '.join([unicode(name) for id_, name in
-                       mkt.regions.REGIONS_CHOICES_NAME[1:]]))
+            ', '.join(sorted(unicode(name) for id_, name in
+                             mkt.regions.REGIONS_CHOICES_NAME)))
 
     def test_excluded_regions_not_listed(self):
         self.skip_if_disabled(settings.REGION_STORES)
         AER.objects.create(addon=self.webapp, region=mkt.regions.BR.id)
 
-        expected = [unicode(name) for id_, name in
-                    mkt.regions.REGIONS_CHOICES_NAME[1:]
-                    if id_ != mkt.regions.BR.id]
+        # This looks at the included regions and prints out the names
+        # so we can compare it to what's shown under "Regions".
+        expected = sorted(unicode(name) for id_, name in
+                          mkt.regions.REGIONS_CHOICES_NAME
+                          if id_ != mkt.regions.BR.id)
 
         r = self.client.get(self.url)
         eq_(strip_whitespace(pq(r.content)('#regions').text()),
@@ -1087,7 +1150,7 @@ class TestEditDetails(TestEdit):
 
     def test_excluded_all_regions_not_listed(self):
         self.skip_if_disabled(settings.REGION_STORES)
-        for region in mkt.regions.REGION_IDS:
+        for region in mkt.regions.ALL_REGION_IDS:
             AER.objects.create(addon=self.webapp, region=region)
 
         r = self.client.get(self.url)
@@ -1105,15 +1168,6 @@ class TestEditDetails(TestEdit):
 
             eq_(self.get_excluded_ids(), [region_id])
 
-    def test_cannot_exclude_all_regions(self):
-        self.skip_if_disabled(settings.REGION_STORES)
-        data = self.get_dict(regions=[], other_regions=True)
-        r = self.client.post(self.edit_url, data)
-
-        eq_(r.context['region_form'].errors,
-            {'regions': ['You must select at least one region.']})
-        eq_(AER.objects.count(), 0)
-
     def test_exclude_future_regions(self):
         self.skip_if_disabled(settings.REGION_STORES)
         data = self.get_dict(regions=mkt.regions.REGION_IDS,
@@ -1121,7 +1175,7 @@ class TestEditDetails(TestEdit):
         r = self.client.post(self.edit_url, data)
         self.assertNoFormErrors(r)
 
-        eq_(self.get_excluded_ids(), [mkt.regions.FUTURE.id])
+        eq_(self.get_excluded_ids(), [mkt.regions.WORLDWIDE.id])
 
     def test_include_regions(self):
         self.skip_if_disabled(settings.REGION_STORES)
@@ -1136,7 +1190,7 @@ class TestEditDetails(TestEdit):
 
     def test_include_future_regions(self):
         self.skip_if_disabled(settings.REGION_STORES)
-        AER.objects.create(addon=self.webapp, region=mkt.regions.FUTURE.id)
+        AER.objects.create(addon=self.webapp, region=mkt.regions.WORLDWIDE.id)
 
         data = self.get_dict(regions=mkt.regions.REGION_IDS,
                              other_regions=True)
@@ -1147,7 +1201,7 @@ class TestEditDetails(TestEdit):
 
     def test_include_all_and_future_regions(self):
         self.skip_if_disabled(settings.REGION_STORES)
-        AER.objects.create(addon=self.webapp, region=mkt.regions.FUTURE.id)
+        AER.objects.create(addon=self.webapp, region=mkt.regions.WORLDWIDE.id)
 
         data = self.get_dict(regions=mkt.regions.REGION_IDS,
                              other_regions=True)
@@ -1465,6 +1519,19 @@ class TestAdminSettings(TestAdmin):
         eq_(list(webapp.content_ratings.values_list('ratings_body', 'rating')),
             [(0, 2)])
 
+    def test_ratings_edit_add_dupe(self):
+        self.log_in_with('Apps:Configure')
+
+        data = {'caption': 'ball so hard that ish cray',
+                'position': '1',
+                'upload_hash': 'abcdef',
+                'app_ratings': ('1', '2')
+                }
+        r = self.client.post(self.edit_url, data)
+        self.assertFormError(r, 'form', 'app_ratings',
+                             'Only one rating from each ratings body '
+                             'may be selected.')
+
     def test_ratings_edit_update(self):
         self.log_in_with('Apps:Configure')
         webapp = self.get_webapp()
@@ -1472,23 +1539,22 @@ class TestAdminSettings(TestAdmin):
         data = {'caption': 'ball so hard that ish cray',
                 'position': '1',
                 'upload_hash': 'abcdef',
-                'app_ratings': ('1', '3')
+                'app_ratings': '3',
                 }
         r = self.client.post(self.edit_url, data)
         eq_(r.status_code, 200)
         eq_(list(webapp.content_ratings.all().values_list('ratings_body',
                                                           'rating')),
-            [(0, 1), (0, 3)])
+            [(0, 3)])
         #a second update doesn't duplicate existing ratings
         r = self.client.post(self.edit_url, data)
         eq_(list(webapp.content_ratings.all().values_list('ratings_body',
                                                           'rating')),
-            [(0, 1), (0, 3)])
+            [(0, 3)])
         del data['app_ratings']
 
         r = self.client.post(self.edit_url, data)
         assert not webapp.content_ratings.exists()
-
 
     def test_ratings_view(self):
         self.log_in_with('Apps:ViewConfiguration')

@@ -1,7 +1,7 @@
 import csp.views
 from waffle.views import wafflejs
 
-from django.conf.urls.defaults import patterns, url, include
+from django.conf.urls import include, patterns, url
 from django.views.decorators.cache import never_cache
 
 from . import views, install
@@ -14,8 +14,6 @@ services_patterns = patterns('',
     url('^csp/report$', views.cspreport, name='amo.csp.report'),
     url('^builder-pingback', views.builder_pingback,
         name='amo.builder-pingback'),
-    url('^graphite/(addons|dev|stage|apps-preview|apps-preview-dev)$',
-        views.graphite, name='amo.graphite'),
     url('^timing/record$', views.record, name='amo.timing.record'),
     url('^pfs.php$', views.plugin_check_redirect, name='api.plugincheck'),
     url('^install.php$', install.install, name='api.install'),

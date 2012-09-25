@@ -1,14 +1,17 @@
+import hashlib
+
 from django import http
 from django.shortcuts import redirect
+from django.views.decorators.http import etag
 
 import jingo
 from session_csrf import anonymous_csrf_exempt
 from tower import ugettext as _
 
+import amo
 from abuse.models import send_abuse_report
 from access import acl
 from addons.decorators import addon_view_factory
-import amo
 from amo.decorators import login_required, permission_required
 from amo.forms import AbuseForm
 from amo.utils import paginate
@@ -33,11 +36,41 @@ def detail(request, addon):
         'flags': get_flags(request, reviews),
         'has_review': request.user.is_authenticated() and
                       reviews.filter(user=request.user.id).exists(),
-        'grouped_ratings': GroupedRating.get(addon.id)
+        'grouped_ratings': GroupedRating.get(addon.id),
+        'details_page': True
     }
     if addon.is_public():
         ctx['abuse_form'] = AbuseForm(request=request)
     return jingo.render(request, 'detail/app.html', ctx)
+
+
+@addon_all_view
+def manifest(request, addon):
+    """
+    Returns the "mini" manifest for packaged apps.
+
+    If not a packaged app, returns an empty JSON doc.
+
+    """
+    is_reviewer = acl.check_reviewer(request)
+    is_dev = addon.has_author(request.amo_user)
+    is_public = addon.status == amo.STATUS_PUBLIC
+
+    if (not addon.is_packaged or addon.disabled_by_user or (
+            not is_public and not (is_reviewer or is_dev))):
+        raise http.Http404
+
+    manifest_content = addon.get_cached_manifest()
+    manifest_etag = hashlib.md5(manifest_content).hexdigest()
+
+    @etag(lambda r, a: manifest_etag)
+    def _inner_view(request, addon):
+        response = http.HttpResponse(manifest_content,
+            content_type='application/x-web-app-manifest+json')
+        response['ETag'] = manifest_etag
+        return response
+
+    return _inner_view(request, addon)
 
 
 @addon_all_view

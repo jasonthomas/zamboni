@@ -3,23 +3,21 @@ import datetime
 from django import forms
 
 import happyforms
-from tower import ugettext_lazy as _lazy
+from tower import ugettext as _, ugettext_lazy as _lazy
 
 from addons.forms import AddonFormBasic
 from addons.models import Addon, AddonUpsell
 import amo
-from amo.utils import raise_required
 from apps.users.notifications import app_surveys
 from apps.users.models import UserNotification
 from files.models import FileUpload
+from files.utils import parse_addon
 from market.models import AddonPremium, Price
 from translations.widgets import TransInput, TransTextarea
 from translations.fields import TransField
 
-from mkt.developers.forms import (PaypalSetupForm as OriginalPaypalSetupForm,
-                                  verify_app_domain)
-from mkt.site.forms import (AddonChoiceField, APP_UPSELL_CHOICES,
-                            APP_PUBLIC_CHOICES)
+from mkt.developers.forms import verify_app_domain
+from mkt.site.forms import AddonChoiceField, APP_PUBLIC_CHOICES
 
 
 class DevAgreementForm(happyforms.Form):
@@ -47,25 +45,46 @@ class NewWebappForm(happyforms.Form):
                                                 ' upload. Please try again.')})
 
     def __init__(self, *args, **kw):
+        self.addon = kw.pop('addon', None)
         self.is_packaged = kw.pop('is_packaged', False)
         super(NewWebappForm, self).__init__(*args, **kw)
 
     def clean_upload(self):
         upload = self.cleaned_data['upload']
-        if not self.is_packaged:
+        if self.is_packaged:
+            pkg = parse_addon(upload, self.addon)
+            ver = pkg.get('version')
+            if (ver and self.addon and
+                self.addon.versions.filter(version=ver).exists()):
+                raise forms.ValidationError(
+                    _(u'Version %s already exists') % ver)
+        else:
             # Throw an error if this is a dupe.
-            verify_app_domain(upload.name)  # JS sets manifest as `upload.name`.
+            # (JS sets manifest as `upload.name`.)
+            verify_app_domain(upload.name)
         return upload
 
 
-class PaypalSetupForm(OriginalPaypalSetupForm):
+class PaypalSetupForm(happyforms.Form):
+    business_account = forms.ChoiceField(widget=forms.RadioSelect, choices=[],
+        label=_lazy(u'Do you already have a PayPal Premier '
+                    'or Business account?'))
+    email = forms.EmailField(required=False,
+                             label=_lazy(u'PayPal email address'))
 
     def __init__(self, *args, **kw):
         super(PaypalSetupForm, self).__init__(*args, **kw)
-        self.fields['business_account'].choices = (
-                ('yes', _lazy(u'Yes')),
-                ('no', _lazy(u'No')),
-                ('later', _lazy(u"I'll link my PayPal account later.")))
+        self.fields['business_account'].choices = (('yes', _lazy('Yes')),
+            ('no', _lazy('No')),
+            ('later', _lazy(u"I'll link my PayPal account later.")))
+
+    def clean(self):
+        data = self.cleaned_data
+        if data.get('business_account') == 'yes' and not data.get('email'):
+            msg = _(u'The PayPal email is required.')
+            self._errors['email'] = self.error_class([msg])
+
+        return data
 
 
 class PremiumTypeForm(happyforms.Form):
@@ -83,23 +102,14 @@ class UpsellForm(happyforms.Form):
     make_public = forms.TypedChoiceField(choices=APP_PUBLIC_CHOICES,
                                     widget=forms.RadioSelect(),
                                     label=_lazy(u'When should your app be '
-                                            'made available for sale?'),
+                                                 'made available for sale?'),
                                     coerce=int,
                                     required=False)
-    do_upsell = forms.TypedChoiceField(coerce=lambda x: bool(int(x)),
-                                       choices=APP_UPSELL_CHOICES,
-                                       widget=forms.RadioSelect(),
-                                       label=_lazy(u'Upsell this app'),
-                                       required=False)
     free = AddonChoiceField(queryset=Addon.objects.none(),
                             required=False,
                             empty_label='',
                             label=_lazy(u'App to upgrade from'),
                             widget=forms.Select())
-    text = forms.CharField(widget=forms.Textarea(),
-                           help_text=_lazy(u'Describe the added benefits.'),
-                           required=False,
-                           label=_lazy(u'Pitch your app'))
 
     def __init__(self, *args, **kw):
         self.extra = kw.pop('extra')
@@ -125,18 +135,6 @@ class UpsellForm(happyforms.Form):
             self.initial['price'] = (Price.objects.active()
                                      .exclude(price='0.00')[0])
 
-    def clean_text(self):
-        if (self.cleaned_data['do_upsell']
-            and not self.cleaned_data['text']):
-            raise_required()
-        return self.cleaned_data['text']
-
-    def clean_free(self):
-        if (self.cleaned_data['do_upsell']
-            and not self.cleaned_data['free']):
-            raise_required()
-        return self.cleaned_data['free']
-
     def clean_make_public(self):
         return (amo.PUBLIC_WAIT if self.cleaned_data.get('make_public')
                                 else None)
@@ -151,8 +149,7 @@ class UpsellForm(happyforms.Form):
             premium.save()
 
         upsell = self.addon.upsold
-        if (self.cleaned_data['do_upsell'] and
-            self.cleaned_data['text'] and self.cleaned_data['free']):
+        if self.cleaned_data['free']:
 
             # Check if this app was already a premium version for another app.
             if upsell and upsell.free != self.cleaned_data['free']:
@@ -160,10 +157,9 @@ class UpsellForm(happyforms.Form):
 
             if not upsell:
                 upsell = AddonUpsell(premium=self.addon)
-            upsell.text = self.cleaned_data['text']
             upsell.free = self.cleaned_data['free']
             upsell.save()
-        elif not self.cleaned_data['do_upsell'] and upsell:
+        elif upsell:
             upsell.delete()
 
         self.addon.update(make_public=self.cleaned_data['make_public'])

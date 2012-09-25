@@ -1,6 +1,7 @@
+import datetime
+
 import jingo
 
-from django.contrib import admin
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.db import transaction
@@ -23,7 +24,7 @@ def featured_apps_admin(request):
     return jingo.render(request, 'zadmin/featuredapp.html')
 
 
-@admin.site.admin_view
+@admin_required
 def ecosystem(request):
     if request.method == 'POST':
         refresh_mdn_cache()
@@ -71,11 +72,16 @@ def featured_apps_ajax(request):
 
 
 @admin_required
-def set_region_ajax(request):
+def set_attrs_ajax(request):
     regions = request.POST.getlist('region[]')
+    startdate = request.POST.get('startdate', None)
+    enddate = request.POST.get('enddate', None)
+
     app = request.POST.get('app', None)
-    if regions and app:
-        fa = FeaturedApp.objects.get(pk=app)
+    if not app:
+        return HttpResponse()
+    fa = FeaturedApp.objects.get(pk=app)
+    if regions:
         regions = set(int(r) for r in regions)
         fa.regions.exclude(region__in=regions).delete()
         to_create = regions - set(fa.regions.filter(region__in=regions)
@@ -83,6 +89,15 @@ def set_region_ajax(request):
         for i in to_create:
             FeaturedAppRegion.objects.create(featured_app=fa, region=i)
 
+    if startdate:
+        fa.start_date = datetime.datetime.strptime(startdate, '%Y-%m-%d')
+    else:
+        fa.start_date = None
+    if enddate:
+        fa.end_date = datetime.datetime.strptime(enddate, '%Y-%m-%d')
+    else:
+        fa.end_date = None
+    fa.save()
     return HttpResponse()
 
 

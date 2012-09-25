@@ -74,6 +74,7 @@ class TestCreate(ReviewTest):
         r = self.client.get(self.add)
         eq_(r.status_code, 200)
         self.assertTemplateUsed(r, 'ratings/add.html')
+        eq_(pq(r.content)('#top').html(), 'Edit your review')
 
     def test_add_admin(self):
         self.log_in_admin()
@@ -218,7 +219,7 @@ class TestCreate(ReviewTest):
         r = self.client.get(self.detail)
         submit_button = pq(r.content)('#add-first-review')
         eq_(submit_button.length, 1)
-        eq_(submit_button.text(), 'Submit a Review')
+        eq_(submit_button.text(), 'Write a Review')
 
     def test_add_link_logged(self):
         # Ensure logged user can see Add Review links.
@@ -439,7 +440,6 @@ class TestListing(ReviewTest):
         reviews = doc('#reviews .review')
         eq_(Review.objects.count(), 2)
         eq_(reviews.length, Review.objects.count())
-        eq_(doc('.average-rating').length, 1)
         eq_(doc('.no-rating').length, 0)
         eq_(doc('.review-heading-profile').length, 0)
 
@@ -464,7 +464,6 @@ class TestListing(ReviewTest):
         doc = pq(r.content)
         eq_(doc('#reviews .item').length, 0)
         eq_(doc('#add-first-review').length, 1)
-        eq_(doc('.average-rating.no-rating').length, 1)
 
     def get_flags(self, actions):
         return sorted(c.get('class').replace(' post', '')

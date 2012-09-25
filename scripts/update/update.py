@@ -12,6 +12,20 @@ _src_dir = lambda *p: os.path.join(settings.SRC_DIR, *p)
 
 
 @task
+def create_virtualenv(ctx):
+    venv = settings.VIRTUAL_ENV
+    ctx.local("rm -f %s/lib64" % venv)
+    ctx.local("virtualenv --distribute --never-download %s" % venv)
+    ctx.local("rm -f %s/lib64 && ln -s ./lib %s/lib64" % (venv, venv))
+
+    ctx.local("%s/bin/pip install --exists-action=w --no-deps --download-cache=/tmp/pip-cache -i %s -r %s/requirements/prod.txt" %
+                (venv, settings.PYPI_MIRROR, settings.SRC_DIR))
+
+    ctx.local("rm -f %s/lib/python2.6/no-global-site-packages.txt" % venv)
+    ctx.local("%s/bin/python /usr/bin/virtualenv --relocatable %s" % (venv, venv))
+
+
+@task
 def update_locales(ctx):
     with ctx.lcd(_src_dir("locale")):
         ctx.local("svn revert -R .")
@@ -22,19 +36,19 @@ def update_locales(ctx):
 @task
 def update_products(ctx):
     with ctx.lcd(settings.SRC_DIR):
-        ctx.local('python2.6 manage.py update_product_details')
+        ctx.local('%s manage.py update_product_details' % settings.PYTHON)
 
 
 @task
 def compress_assets(ctx, arg=''):
     with ctx.lcd(settings.SRC_DIR):
-        ctx.local("python2.6 manage.py compress_assets %s" % arg)
+        ctx.local("%s manage.py compress_assets %s" % (settings.PYTHON, arg))
 
 
 @task
 def schematic(ctx):
     with ctx.lcd(settings.SRC_DIR):
-        ctx.local("python2.6 ./vendor/src/schematic/schematic migrations")
+        ctx.local("%s ./vendor/src/schematic/schematic migrations" % settings.PYTHON)
 
 
 @task
@@ -43,19 +57,10 @@ def update_code(ctx, ref='origin/master'):
         ctx.local("git fetch && git fetch -t")
         ctx.local("git checkout -f %s" % ref)
         ctx.local("git submodule sync")
-        # `submodule sync` doesn't do `--recursive` yet. (P.S. We `sync` twice
-        # to git around the git bug 'fatal: reference not in tree'.)
-        ctx.local("git submodule --quiet foreach 'git submodule --quiet sync "
-                  "&& git submodule --quiet sync "
-                  "&& git submodule update --init --recursive'")
-        ctx.local("git submodule update --init --recursive")  # at the top
-
-
-@task
-def update_remora(ctx):
-    with ctx.lcd(settings.REMORA_DIR):
-        ctx.local('svn revert -R .')
-        ctx.local('svn up')
+        ctx.local("git submodule update --init --recursive")
+        # Recursively run submodule sync and update to get all the right repo URLs.
+        ctx.local("git submodule foreach 'git submodule sync --quiet'")
+        ctx.local("git submodule foreach 'git submodule update --init --recursive'")
 
 
 @task
@@ -69,7 +74,7 @@ def update_info(ctx, ref='origin/master'):
 
 @task
 def checkin_changes(ctx):
-    ctx.local("/usr/bin/rsync -aq --exclude '.git*' --delete %s/ %s/" % (settings.SRC_DIR, settings.WWW_DIR))
+    ctx.local(settings.DEPLOY_SCRIPT)
 
 
 @task
@@ -80,8 +85,8 @@ def disable_cron(ctx):
 @task
 def install_cron(ctx):
     with ctx.lcd(settings.SRC_DIR):
-        ctx.local('python2.6 ./scripts/crontab/gen-cron.py -z %s -r %s/bin -u apache > /etc/cron.d/.%s' %
-                  (settings.SRC_DIR, settings.REMORA_DIR, settings.CRON_NAME))
+        ctx.local('%s ./scripts/crontab/gen-cron.py -z %s -r %s/bin -u apache -p %s > /etc/cron.d/.%s' %
+                  (settings.PYTHON, settings.SRC_DIR, settings.REMORA_DIR, settings.PYTHON, settings.CRON_NAME))
         ctx.local('mv /etc/cron.d/.%s /etc/cron.d/%s' % (settings.CRON_NAME, settings.CRON_NAME))
 
 
@@ -116,7 +121,7 @@ def deploy(ctx):
     deploy_app()
     update_celery()
     with ctx.lcd(settings.SRC_DIR):
-        ctx.local('python2.6 manage.py cron cleanup_validation_results')
+        ctx.local('%s manage.py cron cleanup_validation_results' % settings.PYTHON)
 
 
 @task
@@ -129,12 +134,13 @@ def pre_update(ctx, ref=settings.UPDATE_REF):
 
 @task
 def update(ctx):
+    create_virtualenv()
     update_locales()
     update_products()
     compress_assets()
     compress_assets(arg='--settings=settings_local_mkt')
     schematic()
     with ctx.lcd(settings.SRC_DIR):
-        ctx.local('python2.6 manage.py --settings=settings_local_mkt build_appcache')
-        ctx.local('python2.6 manage.py dump_apps')
-        ctx.local('python2.6 manage.py statsd_ping --key=update')
+        ctx.local('%s manage.py --settings=settings_local_mkt build_appcache' % settings.PYTHON)
+        ctx.local('%s manage.py dump_apps' % settings.PYTHON)
+        ctx.local('%s manage.py statsd_ping --key=update' % settings.PYTHON)

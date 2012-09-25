@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import tempfile
 
 from django.conf import settings
@@ -12,7 +13,9 @@ import amo
 from amo.tests import AMOPaths
 from files.models import FileUpload
 from mkt.api.tests.test_oauth import BaseOAuth, OAuthClient
-from mkt.webapps.models import Webapp
+from mkt.constants import APP_IMAGE_SIZES
+from mkt.developers import tasks
+from mkt.webapps.models import ImageAsset, Webapp
 from users.models import UserProfile
 
 
@@ -23,7 +26,6 @@ class ValidationHandler(BaseOAuth):
         super(ValidationHandler, self).setUp()
         self.list_url = ('api_dispatch_list', {'resource_name': 'validation'})
         self.get_url = None
-        self.consumer = self.accepted_consumer
         self.user = UserProfile.objects.get(pk=2519)
 
     def create(self):
@@ -52,6 +54,7 @@ class TestAddValidationHandler(ValidationHandler):
         res = self.create()
         eq_(res.status_code, 201)  # Note! This should be a 202.
         content = json.loads(res.content)
+        eq_(content['processed'], True)
         obj = FileUpload.objects.get(uuid=content['id'])
         eq_(obj.user, self.user)
 
@@ -149,6 +152,12 @@ class CreateHandler(BaseOAuth):
                                          name=self.file, valid=True)
 
 
+def _mock_fetch_content(url):
+    return open(os.path.join(os.path.dirname(__file__),
+                             '..', '..', 'developers', 'tests', 'icons',
+                             '337141-128.png'))
+
+
 @patch.object(settings, 'SITE_URL', 'http://api/')
 class TestAppCreateHandler(CreateHandler, AMOPaths):
 
@@ -218,6 +227,12 @@ class TestAppCreateHandler(CreateHandler, AMOPaths):
         self.get_url = ('api_dispatch_detail',
                         {'resource_name': 'app', 'pk': pk})
         return Webapp.objects.get(pk=pk)
+
+    @patch('mkt.developers.tasks._fetch_content', _mock_fetch_content)
+    def test_imageassets(self):
+        asset_count = ImageAsset.objects.count()
+        self.create_app()
+        eq_(ImageAsset.objects.count() - len(APP_IMAGE_SIZES), asset_count)
 
     def test_get(self):
         self.create_app()
@@ -361,13 +376,13 @@ class TestAppStatusHandler(CreateHandler, AMOPaths):
         eq_(data['status'], 'incomplete')
 
     def test_disable(self):
-        self.create_app()
+        app = self.create_app()
         res = self.client.patch(self.get_url,
                                 data=json.dumps({'disabled_by_user': True}))
         eq_(res.status_code, 202, res.content)
-        data = json.loads(res.content)
-        eq_(data['disabled_by_user'], True)
-        eq_(data['status'], 'incomplete')
+        app = app.__class__.objects.get(pk=app.pk)
+        eq_(app.disabled_by_user, True)
+        eq_(app.status, amo.STATUS_NULL)
 
     def test_change_status_fails(self):
         self.create_app()
@@ -379,11 +394,11 @@ class TestAppStatusHandler(CreateHandler, AMOPaths):
     @patch('mkt.webapps.models.Webapp.is_complete')
     def test_change_status_passes(self, is_complete):
         is_complete.return_value = True, []
-        self.create_app()
+        app = self.create_app()
         res = self.client.patch(self.get_url,
                         data=json.dumps({'status': 'pending'}))
         eq_(res.status_code, 202, res.content)
-        eq_(json.loads(res.content)['status'], 'pending')
+        eq_(app.__class__.objects.get(pk=app.pk).status, amo.STATUS_PENDING)
 
     @patch('mkt.webapps.models.Webapp.is_complete')
     def test_cant_skip(self, is_complete):
@@ -401,7 +416,7 @@ class TestAppStatusHandler(CreateHandler, AMOPaths):
         res = self.client.patch(self.get_url,
                         data=json.dumps({'status': 'public'}))
         eq_(res.status_code, 202)
-        eq_(json.loads(res.content)['status'], 'public')
+        eq_(app.__class__.objects.get(pk=app.pk).status, amo.STATUS_PUBLIC)
 
 
 class TestCategoryHandler(BaseOAuth):

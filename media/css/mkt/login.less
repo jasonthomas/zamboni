@@ -29,23 +29,33 @@
     }
 }
 
+.still-open a {
+    display: block;
+    font-weight: bold;
+}
+
 .login {
     .notification-box {
         margin-bottom: 24px;
     }
+    h1 {
+        margin-top: 30px;
+    }
+    .prose {
+        overflow: hidden;
+    }
     #welcome {
         min-height: 210px;
-        padding-top: 25px;
         position: relative;
         &:before {
-            background: url(../../img/mkt/crate.png) 57% 100% no-repeat;
-            .background-size(auto 100%);
+            background: url(../../img/mkt/crate.png) 100% 0 no-repeat;
+            .background-size(auto 60%);
             content: "";
             display: block;
             float: right;
             height: 233px;
             position: absolute;
-            top: 60px;
+            top: 50px;
             width: 100%;
         }
         > div {
@@ -53,7 +63,6 @@
             width: 40%;
             z-index: 1;
             .proceed {
-                margin: 0;
             }
             .forgot {
                 margin: 5px 0 0;
@@ -109,6 +118,28 @@
         }
     }
 }
+#page .login #welcome {
+    padding: 25px 0;
+}
+.notification-box.error {
+    background-color: @white;
+}
+
+// This less file is out of date and requires inversion. We have to stop
+// doing things for .force-mobile like the block below.
+.force-mobile.login {
+    #welcome {
+        &:before {
+            content: none;
+        }
+        > div {
+            width: 100%;
+        }
+    }
+    #site-footer {
+        display: none;
+    }
+}
 
 @media (max-width: @10col) {
     .login #welcome:before {
@@ -121,6 +152,10 @@
 }
 
 @media (max-width: @7col) {
+    // On mobile do not show link to submit an app.
+    .still-open {
+        display: none;
+    }
     #login {
         &.old {
             section {
@@ -181,7 +216,7 @@
         }
         #welcome {
             min-height: 230px;
-//            margin: 0 10px;
+            padding: 0 15px;
             &:before {
                 content: none;
             }

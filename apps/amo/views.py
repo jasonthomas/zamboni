@@ -3,8 +3,8 @@ import re
 
 from django import http
 from django.conf import settings
+from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse, HttpResponseBadRequest
-from django.shortcuts import redirect
 from django.utils.encoding import iri_to_uri
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
@@ -78,9 +78,17 @@ def robots(request):
     return HttpResponse(template, mimetype="text/plain")
 
 
+def handler403(request):
+    if request.path_info.startswith('/api/'):
+        # Pass over to handler403 view in api if api was targeted.
+        return api.views.handler403(request)
+    else:
+        return jingo.render(request, 'amo/403.html', status=403)
+
+
 def handler404(request):
     if request.path_info.startswith('/api/'):
-        # Pass over to handler404 view in api if api was targeted
+        # Pass over to handler404 view in api if api was targeted.
         return api.views.handler404(request)
     else:
         return jingo.render(request, 'amo/404.html', status=404)
@@ -88,6 +96,7 @@ def handler404(request):
 
 def handler500(request):
     if request.path_info.startswith('/api/'):
+        # Pass over to handler500 view in api if api was targeted.
         return api.views.handler500(request)
     else:
         return jingo.render(request, 'amo/500.html', status=500)
@@ -123,7 +132,7 @@ def cspreport(request):
         log_cef('CSP Violation', 5, meta, username=request.user,
                 signature='CSPREPORT',
                 msg='A client reported a CSP violation',
-                cs7=v, cs7Label='ContentPolicy')
+                cs6=v, cs6Label='ContentPolicy')
     except (KeyError, ValueError), e:
         log.debug('Exception in CSP report: %s' % e, exc_info=True)
         return HttpResponseBadRequest()
@@ -150,13 +159,6 @@ def builder_pingback(request):
     return http.HttpResponse()
 
 
-def graphite(request, site):
-    ctx = {'width': 586, 'height': 308}
-    ctx.update(request.GET.items())
-    ctx['site'] = site
-    return jingo.render(request, 'services/graphite.html', ctx)
-
-
 @csrf_exempt
 @post_required
 def record(request):
@@ -164,10 +166,10 @@ def record(request):
     # we can just turn the percentage down to zero.
     if get_collect_timings():
         return django_statsd_record(request)
-    return http.HttpResponseForbidden()
+    raise PermissionDenied
 
 
 def plugin_check_redirect(request):
-    return redirect('%s?%s' %
+    return http.HttpResponseRedirect('%s?%s' %
             (settings.PFS_URL,
              iri_to_uri(request.META.get('QUERY_STRING', ''))))

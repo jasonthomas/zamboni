@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
+import datetime
 import json
 import os
+import time
 import urlparse
 import uuid
 import zipfile
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.files.storage import default_storage as storage
 from django.core.urlresolvers import NoReverseMatch
 from django.db import models
@@ -13,25 +16,30 @@ from django.dispatch import receiver
 from django.utils.http import urlquote
 
 import commonware.log
-from elasticutils.contrib.django import F, S
 import waffle
+from elasticutils.contrib.django import F, S
 from tower import ugettext as _
 
-from access.acl import action_allowed, check_reviewer
 import amo
 import amo.models
+from access.acl import action_allowed, check_reviewer
 from addons import query
 from addons.models import (Addon, AddonDeviceType, Category,
                            update_name_table, update_search_index)
+from addons.signals import version_changed
 from amo.decorators import skip_cache
+from amo.helpers import absolutify
 from amo.storage_utils import copy_stored_file
 from amo.urlresolvers import reverse
-from amo.utils import smart_path
+from amo.utils import JSONEncoder, smart_path
 from constants.applications import DEVICE_TYPES
 from files.models import nfd_str
 from files.utils import parse_addon
+from lib.crypto import packaged
 
 import mkt
+from mkt.constants import APP_IMAGE_SIZES
+
 
 log = commonware.log.getLogger('z.addons')
 
@@ -121,6 +129,36 @@ class Webapp(Addon):
             apps_dict[adt.addon_id]._device_types.append(
                 DEVICE_TYPES[adt.device_type])
 
+    @staticmethod
+    def version_and_file_transformer(apps):
+        """Attach all the versions and files to the apps."""
+        if not apps:
+            return
+
+        # Avoids circular imports and uses Django's app cache.
+        Version = models.get_model('versions', 'Version')
+        File = models.get_model('files', 'File')
+
+        ids = set(app.id for app in apps)
+        versions = (Version.uncached.filter(addon__in=ids)
+                                    .select_related('addon'))
+        vids = [v.id for v in versions]
+        files = (File.uncached.filter(version__in=vids)
+                              .select_related('version'))
+
+        # Attach the files to the versions.
+        f_dict = dict((k, list(vs)) for k, vs in
+                      amo.utils.sorted_groupby(files, 'version_id'))
+        for version in versions:
+            version.all_files = f_dict.get(version.id, [])
+        # Attach the versions to the apps.
+        v_dict = dict((k, list(vs)) for k, vs in
+                      amo.utils.sorted_groupby(versions, 'addon_id'))
+        for app in apps:
+            app.all_versions = v_dict.get(app.id, [])
+
+        return apps
+
     def get_url_path(self, more=False, add_prefix=True):
         # We won't have to do this when Marketplace absorbs all apps views,
         # but for now pretend you didn't see this.
@@ -184,6 +222,20 @@ class Webapp(Addon):
                            args=[self.app_slug, urlquote(inapp)])
         return url
 
+    def get_image_asset_url(self, slug):
+        """
+        Returns the URL for an app's image asset that uses the slug specified
+        by `slug`.
+        """
+        if not any(slug == x['slug'] for x in APP_IMAGE_SIZES):
+            raise Exception(
+                "Requesting image asset for size that doesn't exist.")
+
+        try:
+            return ImageAsset.objects.get(addon=self, slug=slug).image_url
+        except ImageAsset.DoesNotExist:
+            return settings.MEDIA_URL + 'img/hub/default-64.png'
+
     @staticmethod
     def domain_from_url(url):
         if not url:
@@ -208,12 +260,32 @@ class Webapp(Addon):
         parsed = urlparse.urlparse(self.manifest_url)
         return '%s://%s' % (parsed.scheme, parsed.netloc)
 
+    def get_manifest_url(self):
+        """
+        Hosted apps: a URI to an external manifest.
+        Packaged apps: a URI to a mini manifest on m.m.o.
+        """
+        if self.is_packaged:
+            if self.current_version:
+                return absolutify(self.get_detail_url('manifest'))
+            else:
+                # Invalid statuses don't have `current_version`.
+                # TODO: Ask Rob about reviewers being able to install
+                # disabled apps?
+                return ''
+        else:
+            return self.manifest_url
+
     def has_icon_in_manifest(self):
         data = self.get_manifest_json()
         return 'icons' in data
 
-    def get_manifest_json(self):
-        file_path = self.get_latest_file().file_path
+    def get_manifest_json(self, file_obj=None):
+        file_ = file_obj or self.get_latest_file()
+        if not file_:
+            return
+
+        file_path = file_.file_path
         try:
             if zipfile.is_zipfile(file_path):
                 zf = zipfile.ZipFile(file_path)
@@ -245,7 +317,7 @@ class Webapp(Addon):
         path = smart_path(nfd_str(upload.path))
         file = version.files.latest()
         file.filename = file.generate_filename(extension='.webapp')
-        file.size = int(max(1, round(storage.size(path) / 1024, 0)))
+        file.size = storage.size(path)
         file.hash = (file.generate_hash(path) if
                      waffle.switch_is_active('file-hash-paranoia') else
                      upload.hash)
@@ -309,7 +381,7 @@ class Webapp(Addon):
         region = getattr(request, 'REGION', mkt.regions.WORLDWIDE)
 
         # See if it's a game without a content rating.
-        if (region == mkt.regions.BR and
+        if (region == mkt.regions.BR and self.listed_in(category='games') and
             not self.content_ratings_in(mkt.regions.BR, 'games')):
             unrated_brazil_game = True
         else:
@@ -369,10 +441,11 @@ class Webapp(Addon):
             [<class 'mkt.constants.regions.BR'>,
              <class 'mkt.constants.regions.CA'>,
              <class 'mkt.constants.regions.UK'>,
-             <class 'mkt.constants.regions.US'>]
+             <class 'mkt.constants.regions.US'>,
+             <class 'mkt.constants.regions.WORLDWIDE'>]
         """
-        regions = filter(None, [mkt.regions.REGIONS_CHOICES_ID_DICT.get(r)
-                                for r in self.get_region_ids()])
+        regions = map(mkt.regions.REGIONS_CHOICES_ID_DICT.get,
+                      self.get_region_ids(worldwide=True))
         return sorted(regions, key=lambda x: x.slug)
 
     def listed_in(self, region=None, category=None):
@@ -400,12 +473,23 @@ class Webapp(Addon):
                         .order_by('rating'))
 
     @classmethod
+    def now(cls):
+        return datetime.date.today()
+
+    @classmethod
     def featured(cls, cat=None, region=None, limit=6):
         FeaturedApp = models.get_model('zadmin', 'FeaturedApp')
         qs = (FeaturedApp.objects
               .filter(app__status=amo.STATUS_PUBLIC,
                       app__disabled_by_user=False)
               .order_by('-app__weekly_downloads'))
+        qs = (qs.filter(start_date__lte=cls.now())
+            | qs.filter(start_date__isnull=True))
+        qs = (qs.filter(end_date__gte=cls.now())
+            | qs.filter(end_date__isnull=True))
+
+        if waffle.switch_is_active('disabled-payments'):
+            qs = qs.filter(app__premium_type__in=amo.ADDON_FREES)
 
         if isinstance(cat, list):
             qs = qs.filter(category__in=cat)
@@ -442,9 +526,6 @@ class Webapp(Addon):
     @classmethod
     def get_excluded_in(cls, region):
         """Return IDs of Webapp objects excluded from a particular region."""
-        # Worldwide is a subset of Future regions.
-        if region == mkt.regions.WORLDWIDE:
-            region = mkt.regions.FUTURE
         return list(AddonExcludedRegion.objects.filter(region=region.id)
                     .values_list('addon', flat=True))
 
@@ -457,12 +538,16 @@ class Webapp(Addon):
         if cat:
             filters.update(category=cat.id)
 
+        srch = S(cls).query(**filters)
         if region:
             excluded = cls.get_excluded_in(region)
             if excluded:
-                return S(cls).query(**filters).filter(~F(id__in=excluded))
+                srch = srch.filter(~F(id__in=excluded))
 
-        return S(cls).query(**filters)
+        if waffle.switch_is_active('disabled-payments'):
+            srch = srch.filter(premium_type__in=amo.ADDON_FREES, price=0)
+
+        return srch
 
     @classmethod
     def popular(cls, cat=None, region=None):
@@ -482,31 +567,59 @@ class Webapp(Addon):
         except IndexError:
             return None
 
-    @amo.cached_property
-    def is_packaged(self):
-        """
-        Whether this app's latest version is a packaged app.
+    def in_rereview_queue(self):
+        return self.rereviewqueue_set.exists()
 
-        Note: This isn't using `current_version` since current version only
-        gets valid versions and we need to use this during the submission flow.
+    def get_cached_manifest(self, force=False):
         """
-        version = None
-        try:
-            # If the webapp has no version at all (which it shouldn't)
-            # .latest() raises a DoesNotExist.
-            version = self.versions.latest()
-        except models.ObjectDoesNotExist:
-            pass
-        if version:
-            return version.all_files[0].is_packaged
-        return False
+        Creates the "mini" manifest for packaged apps and caches it.
 
-    @amo.cached_property
-    def has_packaged_files(self):
+        Call this with `force=True` whenever we need to update the cached
+        version of this manifest, e.g., when a new version of the packaged app
+        is approved.
+
+        If the addon is not a packaged app, this will not cache anything.
+
         """
-        Whether this app has any versions that are a packaged app.
-        """
-        return self.versions.filter(files__is_packaged=True).exists()
+        if not self.is_packaged:
+            return
+
+        key = 'webapp:{0}:manifest'.format(self.pk)
+
+        if not force:
+            data = cache.get(key)
+            if data:
+                return data
+
+        version = self.current_version
+        if not version:
+            data = {}
+        else:
+            file = version.all_files[0]
+            manifest = self.get_manifest_json()
+
+            data = {
+                'name': self.name,
+                'version': version.version,
+                'size': file.size,
+                'release_notes': version.releasenotes,
+                'package_path': file.get_url_path('manifest'),
+            }
+            if 'icons' in manifest:
+                data['icons'] = manifest['icons']
+            if 'locales' in manifest:
+                data['locales'] = manifest['locales']
+
+        data = json.dumps(data, cls=JSONEncoder)
+
+        cache.set(key, data, 0)
+
+        return data
+
+    def sign_if_packaged(self, version_pk, reviewer=False):
+        if not self.is_packaged:
+            return
+        return packaged.sign(version_pk, reviewer=reviewer)
 
 
 # Pull all translated_fields from Addon over to Webapp.
@@ -517,6 +630,54 @@ models.signals.post_save.connect(update_search_index, sender=Webapp,
                                  dispatch_uid='mkt.webapps.index')
 models.signals.post_save.connect(update_name_table, sender=Webapp,
                                  dispatch_uid='mkt.webapps.update.name.table')
+
+
+@receiver(version_changed, dispatch_uid='update_cached_manifests')
+def update_cached_manifests(sender, **kw):
+    if not kw.get('raw'):
+        from mkt.webapps.tasks import update_cached_manifests
+        update_cached_manifests.delay(sender.id)
+
+
+class ImageAsset(amo.models.ModelBase):
+    addon = models.ForeignKey(Addon, related_name='image_assets')
+    filetype = models.CharField(max_length=25, default='image/png')
+    slug = models.CharField(max_length=25)
+
+    class Meta:
+        db_table = 'image_assets'
+
+    def flush_urls(self):
+        return ['*/addon/%d/' % self.addon_id, self.image_url, ]
+
+    def _image_url(self, url_template):
+        if self.modified is not None:
+            modified = int(time.mktime(self.modified.timetuple()))
+        else:
+            modified = 0
+        args = [self.id / 1000, self.id, modified]
+        if '.png' not in url_template:
+            args.insert(2, self.file_extension)
+        return url_template % tuple(args)
+
+    def _image_path(self, url_template):
+        args = [self.id / 1000, self.id]
+        if '.png' not in url_template:
+            args.append(self.file_extension)
+        return url_template % tuple(args)
+
+    @property
+    def file_extension(self):
+        # Assume that blank is an image.
+        return 'png' if not self.filetype else self.filetype.split('/')[1]
+
+    @property
+    def image_url(self):
+        return self._image_url(settings.IMAGEASSET_FULL_URL)
+
+    @property
+    def image_path(self):
+        return self._image_path(settings.IMAGEASSET_FULL_PATH)
 
 
 class Installed(amo.models.ModelBase):
@@ -539,7 +700,7 @@ class Installed(amo.models.ModelBase):
 def add_uuid(sender, **kw):
     if not kw.get('raw'):
         install = kw['instance']
-        if not install.uuid and install.premium_type == None:
+        if not install.uuid and install.premium_type is None:
             install.uuid = ('%s-%s' % (install.pk, str(uuid.uuid4())))
             install.premium_type = install.addon.premium_type
             install.save()

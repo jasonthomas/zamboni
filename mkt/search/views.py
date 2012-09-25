@@ -2,6 +2,7 @@ from django.shortcuts import redirect
 
 import jingo
 from tower import ugettext as _
+import waffle
 
 import amo
 import amo.utils
@@ -52,7 +53,9 @@ def _filter_search(qs, query, filters=None, sorting=None,
         qs = qs.query(or_=name_query(query['q'].lower()))
     if 'cat' in show:
         qs = qs.filter(category=query['cat'])
-    if 'price' in show:
+    if waffle.switch_is_active('disabled-payments'):
+        qs = qs.filter(premium_type__in=amo.ADDON_FREES, price=0)
+    elif 'price' in show:
         if query['price'] == 'paid':
             qs = qs.filter(premium_type__in=amo.ADDON_PREMIUMS)
         elif query['price'] == 'free':
@@ -60,7 +63,9 @@ def _filter_search(qs, query, filters=None, sorting=None,
     if 'device' in show:
         qs = qs.filter(device=forms.DEVICE_CHOICES_IDS[query['device']])
     if 'sort' in show:
-        sort_by = sorting[query['sort']]
+        sort_by = None
+        if query['sort'] in sorting:
+            sort_by = sorting[query['sort']]
 
         # For "Adolescent" regions popularity is global installs + reviews.
 
@@ -69,7 +74,8 @@ def _filter_search(qs, query, filters=None, sorting=None,
             # from only that region.
             sort_by = '-popularity_%s' % region.id
 
-        qs = qs.order_by(sort_by)
+        if sort_by:
+            qs = qs.order_by(sort_by)
     elif not query.get('q'):
 
         if (sorting_default == 'popularity' and region and
@@ -101,9 +107,9 @@ def price_sidebar(query):
     free = qprice == 'free'
     paid = qprice == 'paid'
     return [
-        FacetLink(_('Any Price'), dict(price=None), not (paid or free)),
-        FacetLink(_('Free Only'), dict(price='free'), free),
-        FacetLink(_('Premium Only'), dict(price='paid'), paid),
+        FacetLink(_('All'), dict(price=None), not (paid or free)),
+        FacetLink(_('Free'), dict(price='free'), free),
+        FacetLink(_('Paid'), dict(price='paid'), paid),
     ]
 
 
@@ -170,13 +176,13 @@ def _app_search(request, category=None, browse=None):
     categories = Category.objects.filter(type=amo.ADDON_WEBAPP, id__in=cats)
 
     # If category is not listed as a facet, then remove `cat` and redirect.
-    if (query.get('cat') and
-        query['cat'] not in categories.values_list('id', flat=True)):
-        if category:
-            return {'redirect': reverse('search.search')}
-        else:
-            return {'redirect': amo.utils.urlparams(request.get_full_path(),
-                                                    cat=None)}
+    # if (query.get('cat') and
+    #     query['cat'] not in categories.values_list('id', flat=True)):
+    #     if category:
+    #         return {'redirect': reverse('search.search')}
+    #     else:
+    #         return {'redirect': amo.utils.urlparams(request.get_full_path(),
+    #                                                 cat=None)}
 
     ctx = {
         'pager': pager,

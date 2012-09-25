@@ -1,8 +1,8 @@
 from collections import defaultdict
 
+from django import http
 from django.conf import settings
 from django.db.models import Q
-from django.shortcuts import redirect
 from django.utils.encoding import smart_str
 from django.views.decorators.vary import vary_on_headers
 from django.utils import translation
@@ -12,6 +12,7 @@ import commonware.log
 import jingo
 from mobility.decorators import mobile_template
 from tower import ugettext as _
+import waffle
 
 import amo
 import bandwagon.views
@@ -390,6 +391,8 @@ class WebappSuggestionsAjax(SearchSuggestionsAjax):
         res = SearchSuggestionsAjax.queryset(self)
         if self.category:
             res = res.filter(category__in=[self.category])
+        if waffle.switch_is_active('disabled-payments'):
+            res = res.filter(premium_type__in=amo.ADDON_FREES, price=0)
 
         region = getattr(self.request, 'REGION', mkt.regions.WORLDWIDE)
         if region:
@@ -589,7 +592,8 @@ def search(request, tag_name=None, template=None):
         extra_params = None
     fixed = fix_search_query(request.GET, extra_params=extra_params)
     if fixed is not request.GET:
-        return redirect(urlparams(request.path, **fixed), permanent=True)
+        return http.HttpResponsePermanentRedirect(urlparams(request.path,
+                                                            **fixed))
 
     form = ESSearchForm(request.GET or {})
     form.is_valid()  # Let the form try to clean data.

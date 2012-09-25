@@ -11,10 +11,36 @@ from pyquery import PyQuery as pq
 import amo
 import amo.tests
 from amo.urlresolvers import reverse
+from mkt.webapps.models import Webapp
+
+
+class Test403(amo.tests.TestCase):
+    fixtures = ['base/users', 'webapps/337141-steamcube']
+
+    def setUp(self):
+        assert self.client.login(username='steamcube@mozilla.com',
+                                 password='password')
+
+    def _test_403(self, url):
+        res = self.client.get(url, follow=True)
+        eq_(res.status_code, 403)
+        self.assertTemplateUsed(res, 'site/403.html')
+
+    def test_403_admin(self):
+        self._test_403('/admin')
+
+    def test_403_devhub(self):
+        assert self.client.login(username='regular@mozilla.com',
+                                 password='password')
+        app = Webapp.objects.get(pk=337141)
+        self._test_403(app.get_dev_url('edit'))
+
+    def test_403_reviewer(self):
+        self._test_403('/reviewers')
 
 
 class Test404(amo.tests.TestCase):
-    fixtures = ['base/users', 'webapps/337141-steamcube']
+    fixtures = ['webapps/337141-steamcube']
 
     def _test_404(self, url):
         r = self.client.get(url, follow=True)
@@ -46,6 +72,7 @@ class TestManifest(amo.tests.TestCase):
     def test_manifest(self):
         response = self.client.get(reverse('manifest.webapp'))
         eq_(response.status_code, 200)
+        eq_(response['Content-Type'], 'application/x-web-app-manifest+json')
         content = json.loads(response.content)
         eq_(content['name'], 'Firefox Marketplace')
         eq_(content['default_locale'], 'en-US')

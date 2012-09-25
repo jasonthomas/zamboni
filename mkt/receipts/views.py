@@ -1,5 +1,5 @@
 from django import http
-from django.shortcuts import redirect
+from django.core.exceptions import PermissionDenied
 from django.views.decorators.csrf import csrf_exempt
 
 import commonware.log
@@ -54,7 +54,7 @@ def _record(request, addon):
 
     # Require login for premium.
     if not logged and (premium or not allow_anon_install):
-        return redirect(reverse('users.login'))
+        return http.HttpResponseRedirect(reverse('users.login'))
 
     ctx = {'addon': addon.pk}
 
@@ -70,7 +70,7 @@ def _record(request, addon):
         if (premium and
             not addon.has_purchased(request.amo_user) and
             not is_reviewer and not is_dev):
-            return http.HttpResponseForbidden()
+            raise PermissionDenied
 
         # Log the install.
         installed, c = Installed.objects.safer_get_or_create(addon=addon,
@@ -172,7 +172,7 @@ def issue(request, addon):
     review = acl.action_allowed_user(user, 'Apps', 'Review') if user else None
     developer = addon.has_author(user)
     if not (review or developer):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     installed, c = Installed.objects.safer_get_or_create(addon=addon,
                                                          user=request.amo_user)

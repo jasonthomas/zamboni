@@ -29,6 +29,9 @@
 {% endif %}
 
 {% block content %}
+  {% if product.is_premium() %}
+    {{ disabled_payments_notice(addon=product) }}
+  {% endif %}
   <h1 id="top">{{ _('App Details') }}</h1>
   {% include 'purchase/error.html' %}
   {{ mkt_breadcrumbs(items=[(url('browse.apps'), _('Apps')),
@@ -96,41 +99,9 @@
       </div>
     </section>
 
-    {% if waffle.switch('ratings') %}
-      <section class="reviews c infobox">
-        <div id="{% if reviews %}reviews-detail{% else %}reviews{% endif %}">
-          <div class="review-stars-header">
-            <h3 class="wide">{{ _('Reviews') }}</h3>
-            {% if reviews %}
-              <a class="overall-reviews average-rating arrow"
-                 href="{{ product.get_ratings_url() }}">
-                {{ product.average_rating|float|stars }}
-                <span>
-                  {% trans cnt=product.total_reviews,
-                           num=product.total_reviews|numberfmt %}
-                    {{ num }} review
-                  {% pluralize %}
-                    {{ num }} reviews
-                  {% endtrans %}
-                </span>
-              </a>
-            {% endif %}
-          </div>
-          <div class="review-stars wide">
-            {% include 'ratings/helpers/grouped_ratings.html' %}
-            {% if not reviews %}
-              <p class="not-rated">{{ _('This app is not yet rated.') }}</p>
-            {% endif %}
-            {% if can_review %}
-              <p><a class="overall-reviews add-edit-review arrow" id="add-first-review"
-                 href="{{ product.get_ratings_url('add') }}">
-                {{ _('Edit Your Review') if has_review else _('Submit a Review')
-                }}</a></p>
-            {% endif %}
-          </div>
-        </div>
-      </section>
-    {% endif %}
+    {% with can_review=can_review, has_review=has_review %}
+      {% include "detail/includes/ratings.html" %}
+    {% endwith %}
 
     <section id="support" class="infobox support c">
       <div>
@@ -167,53 +138,59 @@
               {{ _('Report Abuse') }}</a></li>
           {% endif %}
         </ul>
-        {% set upsell = product.upsell %}
-        {% if upsell %}
-          {% set prm = upsell.premium_addon %}
-          {% if prm %}
-            <a id="upsell" class="narrow"
-               href="{{ prm.get_url_path()|urlparams(src='mkt-detail-upsell') }}">
-               <span class="avail">{{ _('Premium version available') }}</span>
-               <img class="icon" src="{{ prm.get_icon_url(16) }}">
-               <span class="name">{{ prm.name }}</span>
-            </a>
+        {% if not waffle.switch('disabled-payments') %}
+          {% set upsell = product.upsell %}
+          {# no payments for now #}
+          {% if upsell %}
+            {% set prm = upsell.premium_addon %}
+            {% if prm %}
+              <a id="upsell" class="narrow"
+                 href="{{ prm.get_url_path()|urlparams(src='mkt-detail-upsell') }}">
+                 <span class="avail">{{ _('Premium version available') }}</span>
+                 <img class="icon" src="{{ prm.get_icon_url(16) }}">
+                 <span class="name">{{ prm.name }}</span>
+              </a>
+            {% endif %}
           {% endif %}
         {% endif %}
-        <dl class="narrow">
-          <dt>{{ _('Published') }}</dt>
-          <dd>{{ product.created|timelabel }}</dd>
-        </dl>
-        {% if content_ratings %}
-          <div class="content-ratings c">
-            <h3>
-              {% trans DEJUS=mkt.ratingsbodies.DJCTQ.full_name,
-                       DEJUS_URL=mkt.ratingsbodies.DJCTQ.url %}
-                Rating by the <a href="{{ DEJUS_URL }}" target="_blank" title="{{ DEJUS }}">DEJUS</a>
-              {% endtrans %}
-            </h3>
-            {% for content_rating in content_ratings %}
-              {% set rating = content_rating.get_rating() %}
-              <div class="content-rating c">
-                <div class="icon icon-{{ rating.name }}">{{ rating.name }}</div>
-                <p class="description">{{ rating.description }}</p>
-              </div>
-            {% endfor %}
-          </div>
-        {% endif %}
       </div>
-
-      <div class="actions wide">
-        {% if is_dev %}
-          <p><a href="{{ product.get_dev_url() }}" class="button manage"
-                target="_blank">{{ _('Manage') }}</a></p>
-        {% endif %}
-        {% if is_reviewer %}
-          <p><a href="{{ url('reviewers.apps.review', product.app_slug) }}"
-                class="button good reviewer" target="_blank">
-            {% if product.is_pending() %}{{ _('Approve / Reject') }}{% else %}{{ _('Review History') }}{% endif %}</a></p>
-        {% endif %}
-      </div>
-
     </section>
+
+    {% if content_ratings %}
+      <div class="content-ratings infobox c">
+        <div>
+          <h3>
+            {% trans DEJUS=mkt.ratingsbodies.DJCTQ.full_name,
+                     DEJUS_URL=mkt.ratingsbodies.DJCTQ.url %}
+              Rating by the <a href="{{ DEJUS_URL }}" target="_blank" title="{{ DEJUS }}">DEJUS</a>
+            {% endtrans %}
+          </h3>
+          {% for content_rating in content_ratings %}
+            {% set rating = content_rating.get_rating() %}
+            <div class="content-rating c">
+              <div class="icon icon-{{ rating.name }}">{{ rating.name }}</div>
+              <p class="description">{{ rating.description }}</p>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if is_dev or is_reviewer %}
+      <div class="actions infobox">
+        <div>
+          {% if is_dev %}
+            <p><a href="{{ product.get_dev_url() }}" class="button manage"
+                  target="_blank">{{ _('Manage') }}</a></p>
+          {% endif %}
+          {% if is_reviewer %}
+            <p><a href="{{ url('reviewers.apps.review', product.app_slug) }}"
+                  class="button good reviewer" target="_blank">
+              {% if product.is_pending() %}{{ _('Approve / Reject') }}{% else %}{{ _('Review History') }}{% endif %}</a></p>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
   {% endif %}
 {% endblock %}

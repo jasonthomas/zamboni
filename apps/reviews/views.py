@@ -1,4 +1,5 @@
 from django import http
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect
 from django.template import Context, loader
 
@@ -112,7 +113,7 @@ def flag(request, addon, review_id):
 def delete(request, addon, review_id):
     review = get_object_or_404(Review.objects, pk=review_id, addon=addon)
     if not user_can_delete_review(request, review):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     review.delete()
 
     # Update the ratings and counts for the add-on/app.
@@ -139,7 +140,7 @@ def reply(request, addon, review_id):
     is_admin = acl.action_allowed(request, 'Addons', 'Edit')
     is_author = acl.check_addon_ownership(request, addon, dev=True)
     if not (is_admin or is_author):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
 
     review = get_object_or_404(Review.objects, pk=review_id, addon=addon)
     form = forms.ReviewReplyForm(request.POST or None)
@@ -177,12 +178,19 @@ def reply(request, addon, review_id):
 @has_purchased
 def add(request, addon, template=None):
     if addon.has_author(request.user):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     form = forms.ReviewForm(request.POST or None)
     if (request.method == 'POST' and form.is_valid() and
         not request.POST.get('detailed')):
         details = _review_details(request, addon, form)
         review = Review.objects.create(**details)
+        if 'flag' in form.cleaned_data and form.cleaned_data['flag']:
+            rf = ReviewFlag(review=review,
+                        user_id=request.user.id,
+                        flag=ReviewFlag.OTHER,
+                        note='URLs')
+            rf.save()
+
         amo.log(amo.LOG.ADD_REVIEW, addon, review)
         log.debug('New review: %s' % review.id)
 
@@ -213,7 +221,7 @@ def edit(request, addon, review_id):
     review = get_object_or_404(Review, pk=review_id, addon=addon)
     is_admin = acl.action_allowed(request, 'Addons', 'Edit')
     if not (request.user.id == review.user.id or is_admin):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     cls = forms.ReviewReplyForm if review.reply_to else forms.ReviewForm
     form = cls(request.POST)
     if form.is_valid():
@@ -230,7 +238,7 @@ def edit(request, addon, review_id):
 @login_required
 def spam(request):
     if not acl.action_allowed(request, 'Spam', 'Flag'):
-        return http.HttpResponseForbidden()
+        raise PermissionDenied
     spam = Spam()
 
     if request.method == 'POST':
@@ -250,7 +258,7 @@ def spam(request):
 
         for reason in spam.reasons():
             spam.redis.srem(reason, review.id)
-        return redirect(request.path)
+        return http.HttpResponseRedirect(request.path)
 
     buckets = {}
     for reason in spam.reasons():

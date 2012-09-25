@@ -47,7 +47,7 @@ class File(amo.models.OnChangeMixin, amo.models.ModelBase):
     version = models.ForeignKey('versions.Version', related_name='files')
     platform = models.ForeignKey('Platform', default=amo.PLATFORM_ALL.id)
     filename = models.CharField(max_length=255, default='')
-    size = models.PositiveIntegerField(default=0)  # kilobytes
+    size = models.PositiveIntegerField(default=0)  # In bytes.
     hash = models.CharField(max_length=255, default='')
     # TODO: delete this column
     codereview = models.BooleanField(default=False)
@@ -74,9 +74,6 @@ class File(amo.models.OnChangeMixin, amo.models.ModelBase):
 
     # Whether a webapp uses flash or not.
     uses_flash = models.BooleanField(default=False, db_index=True)
-
-    # Whether the app is packaged or not (aka hosted).
-    is_packaged = models.BooleanField(default=False, db_index=True)
 
     class Meta(amo.models.ModelBase.Meta):
         db_table = 'files'
@@ -159,8 +156,8 @@ class File(amo.models.OnChangeMixin, amo.models.ModelBase):
         f = cls(version=version, platform=platform)
         upload.path = amo.utils.smart_path(nfd_str(upload.path))
         f.filename = f.generate_filename(os.path.splitext(upload.path)[1])
-        # Size in kilobytes.
-        f.size = int(max(1, round(storage.size(upload.path) / 1024)))
+        # Size in bytes.
+        f.size = storage.size(upload.path)
         data = cls.get_jetpack_metadata(upload.path)
         f.jetpack_version = data['sdkVersion']
         f.builder_version = data['builderVersion']
@@ -235,7 +232,9 @@ class File(amo.models.OnChangeMixin, amo.models.ModelBase):
         # Apache did not like serving unicode filenames (bug 626587).
         if addon.is_webapp():
             extension = extension or '.webapp'
-            parts.append(addon.app_slug)
+            # Apparently we have non-ascii slugs leaking into prod :(
+            # FIXME.
+            parts.append(slugify(addon.app_slug) or 'app')
             parts.append(self.version.version)
         else:
             extension = extension or '.xpi'
@@ -305,6 +304,21 @@ class File(amo.models.OnChangeMixin, amo.models.ModelBase):
         return os.path.join(settings.WATERMARKED_ADDONS_PATH,
                             str(self.version.addon_id),
                             '%s-%s-%s' % (self.pk, user_pk, self.filename))
+
+    def _signed(self):
+        split = self.filename.rsplit('.', 1)
+        split.insert(-1, 'signed')
+        return '.'.join(split)
+
+    @property
+    def signed_file_path(self):
+        return os.path.join(settings.SIGNED_APPS_PATH,
+                            str(self.version.addon_id), self._signed())
+
+    @property
+    def signed_reviewer_file_path(self):
+        return os.path.join(settings.SIGNED_APPS_REVIEWER_PATH,
+                            str(self.version.addon_id), self._signed())
 
     @property
     def extension(self):

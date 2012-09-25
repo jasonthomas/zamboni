@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import base64
+from datetime import date
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ import uuid
 from django.conf import settings
 from django.core.files.storage import default_storage as storage
 from django.core.management import call_command
+from django.utils.http import urlencode
 
 from celeryutils import task
 from django_statsd.clients import statsd
@@ -72,7 +74,8 @@ def compatibility_check(upload_id, app_guid, appversion_str, **kw):
                                overrides={'targetapp_minVersion':
                                                 {app_guid: appversion_str},
                                           'targetapp_maxVersion':
-                                                {app_guid: appversion_str}})
+                                                {app_guid: appversion_str}},
+                               compat=True)
         upload.validation = result
         upload.compat_with_app = app
         upload.compat_with_appver = appver
@@ -97,7 +100,7 @@ def file_validator(file_id, **kw):
 
 
 def run_validator(file_path, for_appversions=None, test_all_tiers=False,
-                  overrides=None):
+                  overrides=None, compat=False):
     """A pre-configured wrapper around the addon validator.
 
     *file_path*
@@ -118,6 +121,11 @@ def run_validator(file_path, for_appversions=None, test_all_tiers=False,
         few things we need to override. See validator for supported overrides.
         Example: {'targetapp_maxVersion': {'<app guid>': '<version>'}}
 
+    *compat=False*
+        Set this to `True` when performing a bulk validation. This allows the
+        validator to ignore certain tests that should not be run during bulk
+        validation (see bug 735841).
+
     To validate the addon for compatibility with Firefox 5 and 6,
     you'd pass in::
 
@@ -128,12 +136,6 @@ def run_validator(file_path, for_appversions=None, test_all_tiers=False,
     """
 
     from validator.validate import validate
-
-    # TODO(Kumar) remove this when validator is fixed, see bug 620503
-    from validator.testcases import scripting
-    scripting.SPIDERMONKEY_INSTALLATION = settings.SPIDERMONKEY
-    import validator.constants
-    validator.constants.SPIDERMONKEY_INSTALLATION = settings.SPIDERMONKEY
 
     apps = dump_apps.Command.JSON_PATH
     if not os.path.exists(apps):
@@ -152,13 +154,14 @@ def run_validator(file_path, for_appversions=None, test_all_tiers=False,
             return validate(path,
                             for_appversions=for_appversions,
                             format='json',
-                            # When False, this flag says to stop testing after
-                            # one tier fails.
+                            # When False, this flag says to stop testing after one
+                            # tier fails.
                             determined=test_all_tiers,
                             approved_applications=apps,
                             spidermonkey=settings.SPIDERMONKEY,
                             overrides=overrides,
-                            timeout=settings.VALIDATOR_TIMEOUT)
+                            timeout=settings.VALIDATOR_TIMEOUT,
+                            compat_test=compat)
     finally:
         if temp:
             os.remove(path)
@@ -252,9 +255,11 @@ def get_preview_sizes(ids, **kw):
         for preview in previews:
             try:
                 log.info('Getting size for preview: %s' % preview.pk)
-                thumb = Image.open(storage.open(preview.thumbnail_path)).size
-                img = Image.open(storage.open(preview.image_path)).size
-                preview.update(sizes={'thumbnail': thumb, 'image': img})
+                sizes = {
+                    'thumbnail':  Image.open(storage.open(preview.thumbnail_path)).size,
+                    'image':  Image.open(storage.open(preview.image_path)).size,
+                }
+                preview.update(sizes=sizes)
             except Exception, err:
                 log.error('Failed to find size of preview: %s, error: %s'
                           % (addon.pk, err))
@@ -329,6 +334,16 @@ def _fetch_content(url):
             raise Exception(str(e.reason))
 
 
+def check_content_type(response, content_type,
+                       no_ct_message, wrong_ct_message):
+    if not response.headers.get('Content-Type', '').startswith(content_type):
+        if 'Content-Type' in response.headers:
+            raise Exception(wrong_ct_message %
+                            (content_type, response.headers['Content-Type']))
+        else:
+            raise Exception(no_ct_message % content_type)
+
+
 def get_content_and_check_size(response, max_size, error_message):
     # Read one extra byte. Reject if it's too big so we don't have issues
     # downloading huge files.
@@ -391,6 +406,13 @@ def fetch_manifest(url, upload_pk=None, **kw):
 
     try:
         response = _fetch_content(url)
+
+        no_ct_message = _('Your manifest must be served with the HTTP '
+                          'header "Content-Type: %s".')
+        wrong_ct_message = _('Your manifest must be served with the HTTP '
+                             'header "Content-Type: %s". We saw "%s".')
+        check_content_type(response, 'application/x-web-app-manifest+json',
+                           no_ct_message, wrong_ct_message)
 
         size_error_message = _('Your manifest must be less than %s bytes.')
         content = get_content_and_check_size(response,

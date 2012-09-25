@@ -1,240 +1,177 @@
-{% set logged = request.user.is_authenticated() %}
-<!DOCTYPE html>
-<html lang="{{ LANG }}" dir="{{ DIR }}"
-  {% if settings.USE_APPCACHE and OFFLINE_MANIFEST %}
-    {{ appcache_manifest_link()|safe }}
-  {% endif %}>
-  <head>
-    <meta charset="utf-8">
-    {% if not settings.ENGAGE_ROBOTS %}
-      <meta name="robots" content="noindex">
-    {% endif %}
-    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, maximum-scale=1">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    {% block extrameta %}{% endblock %}
-    <title>{% block title %}{{ _('Mozilla Marketplace') }}{% endblock %}</title>
+{% extends 'developers/base_impala.html' %}
 
-    <link rel="shortcut icon" type="image/x-icon"
-          href="{{ MEDIA_URL }}img/mkt/logos/128.png" sizes="128x128">
-    <link rel="shortcut icon" type="image/x-icon"
-          href="{{ MEDIA_URL }}img/mkt/logos/64.png" sizes="64x64">
-    <link rel="shortcut icon" type="image/x-icon"
-          href="{{ MEDIA_URL }}img/mkt/logos/32.png" sizes="32x32">
+{% block title %}{{ hub_page_title() }}{% endblock %}
 
-    {% block site_css %}
-      {{ css('mkt/ecosystem') }}
-    {% endblock %}
+{% block extrahead %}
+  {{ css('mkt/ecosystem') }}
+{% endblock %}
 
-    {% block extrahead %}{% endblock %}
+{% block aux_nav %}{% endblock %}
 
-    {% block debug %}
-      {% include "mobile/head_debug.html" %}
-    {% endblock %}
-    {% if logged %}
-      <meta name="csrf" content="{{ csrf_token }}">
-    {% endif %}
-  </head>
-  <body class="html-{{ DIR }} {% block bodyclass %}{% endblock %}"
-        {% if waffle.switch('anonymous-free-installs') %}data-allow-anon-installs="true"{% endif %}
-        data-user="{{ user_data(amo_user)|json }}"
-        data-readonly="{{ settings.READ_ONLY|json }}"
-        data-media-url="{{ MEDIA_URL }}"
-        data-login-url="{{ url('users.browserid_login') }}"
-        data-collect-timings="{{ url('mkt.timing.record') }}:{{ collect_timings_percent }}"
-        {% if not logged %}data-recaptcha="{{ settings.RECAPTCHA_PUBLIC_KEY }}"{% endif %}
-        {% block bodyattrs %}{% endblock %}>
+{% block site_header_title %}{% endblock %}
 
-    {% block siteheader %}
-      <header id="site-header">
-        <section>
-          <div class="wrapper">
-            <h1 class="logo"><a href="{{ url('ecosystem.landing') }}">
-              {{ _('Firefox Marketplace Developers') }}</a></h1>
-            <nav role="navigation">
-              {% if not request.user.is_authenticated() %}
-                <a class="browserid" href="{{ url('users.login') }}?to={{ url('ecosystem.landing') }}">
-                  {{ _('Log in / Register') }}</a>
-                <a class="external" href="https://developer.mozilla.org/en-US/apps">
-                  {{ _('Reference') }}</a>
-              {% else %}
-                <a href="{{ url('submit.app') }}">
-                  {{ _('Submit an App') }}</a>
-                <a href="{{ url('mkt.developers.apps') }}">{{ _('My Apps') }}</a>
-                <a class="external" href="https://developer.mozilla.org/en-US/apps">{{ _('Reference') }}</a>
-                <a href="{{ url('users.logout') }}">{{ _('Log out') }}</a>
-              {% endif %}
-            </nav>
-          </div>
-        </section>
-      </header>
-    {% endblock %}
-
-    <div id="page" class="c" role="main">
-      {# `outer_content` is for stuff you want above `content` on every page. #}
-      {% block outer_content %}
-        {% include 'site/messages/display.html' %}
-      {% endblock %}
-      {% block content %}
-      {% endblock %}
-    </div>
-
-    {% block sitefooter %}
-      <footer id="site-footer" class="ecosystem">
-        <div class="center">
-          <ul>
-            <li><a href="{{ url('site.privacy') }}">
-              {{ _('Privacy Policy') }}</a></li>
-            <li><a href="{{ url('site.terms') }}">
-              {{ _('Terms of Use') }}</a></li>
-            <li><a href="http://mozilla.com/legal/fraud-report/index.html">
-              {{ _('Report Trademark Abuse') }}</a></li>
-          </ul>
-          <h1 id="footzilla">mozilla</h1>
-          <p class="legal">
-            {% trans %}
-              Except where otherwise
-              <a href="http://mozilla.com/about/legal.html#site">noted</a>,
-              content on this site is licensed under the <br />
-              <a href="http://creativecommons.org/licenses/by-sa/3.0/">
-                Creative Commons Attribution Share-Alike License v3.0
-              </a> or any later version.
-            {% endtrans %}
-          </p>
-
-          {% block sitefooter_append %}
-            <ul class="user-actions">
-            {% if not request.user.is_authenticated() %}
-              <li>
-                <a class="browserid" href="{{ url('users.login') }}?to={{ url('ecosystem.landing') }}">
-                  {{ _('Log in / Register') }}</a>
-              </li>
-              <li>
-                <a class="external" href="https://developer.mozilla.org/en-US/apps">
-                  {{ _('Reference') }}</a>
-              </li>
-            {% else %}
-              <li>
-                <a href="{{ url('submit.app') }}">
-                  {{ _('Submit an App') }}</a>
-              </li>
-              <li>
-                <a href="{{ url('mkt.developers.apps') }}">{{ _('My Apps') }}</a>
-              </li>
-              <li>
-                <a href="https://developer.mozilla.org/en-US/apps">{{ _('Reference') }}</a>
-              </li>
-              <li>
-                <a href="{{ url('users.logout') }}">{{ _('Logout') }}</a>
-              </li>
+{% block user_actions %}
+  {% if user.is_authenticated() %}
+    <li class="account">
+      <a href="{{ amo_user.get_url_path() }}" class="user" title="{{ amo_user.email }}">
+        {{ amo_user.welcome_name }}</a>
+      {% if account_links %}
+        <ul>
+          <li>
+            <a href="{{ url('mkt.developers.apps') }}">
+              {{ _('My Submissions') }}</a>
+          </li>
+          {% for link in account_links %}
+            {% if not loop.last %}
+              <li><a href="{{ link.href }}">{{ link.text }}</a></li>
             {% endif %}
-            </ul>
-          {% endblock %}
-        </div>
-      </footer>
-    {% endblock %}
+          {% endfor %}
+          <li class="nomenu logout">
+            <a href="{{ url('users.logout') }}">{{ _('Log out') }}</a>
+          </li>
+        </ul>
+      {% endif %}
+    </li>
+  {% else %}
+    <li class="account anonymous nomenu login{{ ' legacy' if not waffle.switch('browserid-login') }}">
+      {% if waffle.switch('browserid-login') %}
+        <a href="{{ login_link() }}" class="browserid-login browserid"
+           data-url="{{ url('users.browserid_login') }}">
+           {{ _('Log in / Register') }}</a>
+      {% else %}
+        {% trans reg=url('users.register'), login=login_link() %}
+          <a href="{{ reg }}">Register</a> or <a href="{{ login }}">Log in</a>
+        {% endtrans %}
+      {% endif %}
+    </li>
+  {% endif %}
 
-
-    {% include 'purchase/start.html' %}
-    {% include 'purchase/message.html' %}
-
-    <script type="text/template" id="noApps">
-      <div class="noApps">You need to be using<br>
-      <a href="http://nightly.mozilla.org/" target="_blank">
-      Firefox Nightly</a><br>to install this app.</div>
-    </script>
-
-    {% if not logged %}
-      <div id="login" class="overlay">
-        <section>
-          <div class="new">
-            <h2>{{ _('Please sign in') }}</h2>
-            <p>
-              {# TODO(copy): Localize when BrowserID is called Persona. #}
-              {% with personaid_url='https://browserid.org/' %}
-                Just log in or register with your
-                <a href="{{ personaid_url }}">BrowserID</a> account below.
-              {% endwith %}
-            </p>
-            <footer>
-              <a class="button browserid" href="#">{{ _('Log in / Register') }}</a>
-            </footer>
-          </div>
-          <div class="old">
-            <h2>Additional authorization required</h2>
-            <form method="post" action="{{ url('users.login') }}"
-                  class="form-grid">
-              <div class="simple-field row c">
-                <div class="form-label">
-                  <label for="id_username">Email address</label>
-                </div>
-                <div class="form-col">
-                  <input id="id_username" name="username" maxlength="50" type="email">
-                </div>
-              </div>
-              <div class="simple-field row c password">
-                <div class="form-label">
-                  <label for="id_password">Password</label>
-                </div>
-                <div class="form-col">
-                  <input name="password" id="id_password" type="password">
-                </div>
-              </div>
-              <input type="hidden" name="rememberme" value="1">
-              <footer class="listing-footer">
-                <button id="login-submit" type="submit">Log in</button>
-              </footer>
-            </form>
-          </div>
-        </section>
-      </div>
+  {% if user.is_authenticated() %}
+    {% if tools_links|count > 1 %}
+      <li class="tools">
+        <a href="#">{{ tools_title }}</a>
+        <ul>
+          {% for link in tools_links %}
+            <li><a href="{{ link.href }}">{{ link.text }}</a></li>
+          {% endfor %}
+        </ul>
+      </li>
+    {% elif tools_links %}
+      <li class="context tools nomenu">
+        <a href="{{ tools_links[0].href }}">{{ tools_links[0].text }}</a>
+      </li>
     {% endif %}
+  {% endif %}
+{% endblock %}
 
-    <svg height="0">
-      <mask id="tabMaskStart" maskUnits="objectBoundingBox" maskContentUnits="objectBoundingBox">
-        <rect width="1" height="1" x="0" y="0.5" fill="white" />
-        <circle cx="1" cy="0.5" r="0.5" fill="white" />
-        <circle cx="-.1" cy="0.4" r="0.6" />
-      </mask>
-      <mask id="tabMaskEnd" maskUnits="objectBoundingBox" maskContentUnits="objectBoundingBox">
-        <rect width="1" height="1" x="0" y="0.5" fill="white" />
-        <circle cx="0" cy="0.5" r="0.5" fill="white" />
-        <circle cx="1.1" cy="0.4" r="0.6" />
-      </mask>
-    </svg>
+{% block devhub_categories %}
+  <div id="site-nav" class="devhub-categories">
+    <div class="pad">
+      <nav class="menu-nav app-nav no-img" role="navigation">
+        <ul class="c">
+          <li>
+            <a href="{{ url('ecosystem.documentation',
+                        page='principles') }}"
+               {% if category == 'design' %}class="selected"{% endif %}>
+              {{ _('Design') }}
+            </a>
+          </li>
+          <li>
+            <a href="{{ url('ecosystem.documentation', page='html5') }}"
+               {% if category == 'build' %}class="selected"{% endif %}>
+              {{ _('Build') }}</a>
+          </li>
+          <li>
+            <a href="{{ url('ecosystem.documentation',
+                        page='mkt_hosting') }}"
+               {% if category == 'publish' %}class="selected"{% endif %}>
+              {{ _('Publish') }}</a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+{% endblock %}
 
-    <style>
-      .tabnav span:before {
-        mask: url(#tabMaskStart);
-        -webkit-mask-box-image: url(#tabMaskEnd);
-      }
-      .tabnav span:after {
-        mask: url(#tabMaskEnd);
-        -webkit-mask-box-image: url(#tabMaskEnd);
-      }
-    </style>
-
-    {% block dbgoverlay %}{% endblock %}
-
-    {# js #}
-    {% block site_js %}
-      <script src="{{ static(url('jsi18n')) }}"></script>
-      {# When bug 755694 is solved, expose the shim again. #}
-      {# <script src="https://myapps.mozillalabs.com/jsapi/include.js"></script> #}
-      {% if not logged %}
-        {# We need Persona for only non-authenticated users. #}
-        <script async defer src="https://browserid.org/include.js"></script>
-        <script type="text/javascript" src="{{ settings.RECAPTCHA_AJAX_URL }}"></script>
-      {% endif %}
-      {{ js('mkt/consumer') }}
-    {% endblock %}
-
-    {% block paypal_js %}
-      {% if logged %}
-        {# We need PayPal for only authenticated users. #}
-        <script async defer src="{{ settings.PAYPAL_JS_URL }}"></script>
-      {% endif %}
-    {% endblock %}
-
-    {% block js %}{% endblock %}
-  </body>
-</html>
+{% block site_nav_footer %}
+  <div id="site-map-footer">
+    <div class="pad">
+      <ul>
+        <li>
+          <h2>{{ _('Design') }}</h2>
+          <ol>
+            <li>
+              <a href="{{ url('ecosystem.documentation',
+                 page='principles') }}"
+                 title="{{ _('Design Principles') }}">
+                {{ _('Design Principles') }}
+              </a>
+            </li>
+            <li>
+              <a href="{{ url('ecosystem.documentation',
+                 page='patterns') }}"
+                 title="{{ _('Design Patterns') }}">
+                {{ _('Design Patterns') }}
+              </a>
+            </li>
+            <li>
+              <a href="{{ url('ecosystem.documentation',
+                 page='custom_elements') }}"
+                 title="{{ _('Custom Elements') }}">
+                {{ _('Custom Elements') }}
+              </a>
+            </li>
+          </ol>
+        </li>
+        <li>
+          <h2>{{ _('Build') }}</h2>
+          <ol>
+            <li>
+              <a href="{{ url('ecosystem.documentation', page='html5') }}"
+                 title="{{ _('HTML5') }}">
+                {{ _('HTML5') }}
+              </a>
+            </li>
+            <li>
+              <a href="{{ url('ecosystem.documentation', page='devtools') }}"
+                 title="{{ _('Dev Tools') }}">
+                {{ _('Dev Tools') }}
+              </a>
+            </li>
+            <li>
+              <a href="{{ url('ecosystem.documentation', page='templates') }}"
+                 title="{{ _('App Templates') }}">
+                {{ _('App Templates') }}
+              </a>
+            </li>
+          </ol>
+        </li>
+        <li>
+          <h2>{{ _('Publish') }}</h2>
+          <ol>
+            <li>
+              <a href="{{ url('ecosystem.documentation',
+                 page='mkt_hosting') }}"
+                 title="{{ _('Hosting') }}">
+                {{ _('Hosting') }}
+              </a>
+            </li>
+            <li>
+              <a href="{{ url('ecosystem.documentation',
+                 page='mkt_submission') }}"
+                 title="{{ _('Marketplace Submission') }}">
+                {{ _('Marketplace Submission') }}
+              </a>
+            </li>
+            <li>
+              <a href="{{ url('ecosystem.partners') }}"
+                 title="{{ _('Business Partners') }}">
+                {{ _('Business Partners') }}
+              </a>
+            </li>
+          </ol>
+        </li>
+      </ul>
+    </div>
+  </div>
+{% endblock %}

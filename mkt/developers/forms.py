@@ -5,14 +5,13 @@ import socket
 
 from django import forms
 from django.conf import settings
-from django.forms.models import modelformset_factory
+from django.forms.models import formset_factory, modelformset_factory
 
 import commonware
 import happyforms
 import waffle
-from quieter_formset.formset import BaseModelFormSet
+from quieter_formset.formset import BaseFormSet, BaseModelFormSet
 from tower import ugettext as _, ugettext_lazy as _lazy, ungettext as ngettext
-
 
 import amo
 import addons.forms
@@ -23,20 +22,22 @@ from addons.models import (Addon, AddonCategory, AddonUpsell, AddonUser,
                            BlacklistedSlug, Category, Preview)
 from addons.widgets import CategoriesSelectMultiple
 from amo.utils import raise_required, remove_icons
+from editors.models import RereviewQueue
 from lib.video import tasks as vtasks
 from market.models import AddonPremium, Price, PriceCurrency
-from mkt.constants.ratingsbodies import (RATINGS_BY_NAME, ALL_RATINGS,
-                                         RATINGS_BODIES)
 from translations.fields import TransField
 from translations.forms import TranslationFormMixin
 from translations.models import Translation
 from translations.widgets import TransInput, TransTextarea
 
 import mkt
+from mkt.constants import APP_IMAGE_SIZES
+from mkt.constants.ratingsbodies import (RATINGS_BY_NAME, ALL_RATINGS,
+                                         RATINGS_BODIES)
 from mkt.inapp_pay.models import InappConfig
-from mkt.reviewers.models import RereviewQueue
-from mkt.site.forms import AddonChoiceField, APP_UPSELL_CHOICES
-from mkt.webapps.models import AddonExcludedRegion, ContentRating, Webapp
+from mkt.site.forms import AddonChoiceField
+from mkt.webapps.models import (AddonExcludedRegion, ContentRating, ImageAsset,
+                                Webapp)
 
 from . import tasks
 
@@ -283,6 +284,49 @@ class PreviewForm(happyforms.ModelForm):
         fields = ('caption', 'file_upload', 'upload_hash', 'id', 'position')
 
 
+class ImageAssetForm(happyforms.Form):
+    file_upload = forms.FileField(required=False)
+    upload_hash = forms.CharField(required=False)
+    # This lets us POST the data URIs of the unsaved previews so we can still
+    # show them if there were form errors.
+    unsaved_image_data = forms.CharField(required=False,
+                                         widget=forms.HiddenInput)
+
+    def setup(self, data):
+        self.size = data.get('size')
+        self.required = data.get('required')
+        self.slug = data.get('slug')
+        self.name = data.get('name')
+        self.description = data.get('description')
+
+    def get_id(self):
+        return '_'.join(map(str, self.size))
+
+    def save(self, addon):
+        if self.cleaned_data:
+
+            if self.cleaned_data['upload_hash']:
+                if not self.instance:
+                    self.instance, c = ImageAsset.objects.get_or_create(
+                        addon=addon, slug=self.slug)
+                upload_hash = self.cleaned_data['upload_hash']
+                upload_path = os.path.join(settings.TMP_PATH, 'image',
+                                           upload_hash)
+                self.instance.update(filetype='image/png')
+                tasks.resize_imageasset.delay(
+                    upload_path, self.instance.image_path, self.size,
+                    set_modified_on=[self.instance])
+
+    def clean(self):
+        self.cleaned_data = super(ImageAssetForm, self).clean()
+        if self.required and not self.cleaned_data['upload_hash']:
+            raise forms.ValidationError(
+                # L10n: {0} is the name of the image asset type.
+                _('The {0} image asset is required.').format(self.name))
+
+        return self.cleaned_data
+
+
 class AdminSettingsForm(PreviewForm):
     DELETE = forms.BooleanField(required=False)
     mozilla_contact = forms.EmailField(required=False)
@@ -322,6 +366,15 @@ class AdminSettingsForm(PreviewForm):
 
     def clean_position(self):
         return -1
+
+    def clean_app_ratings(self):
+        ratings_ids = self.cleaned_data.get('app_ratings')
+        ratings = [ALL_RATINGS[int(i)] for i in ratings_ids]
+        ratingsbodies = set([r.ratingsbody for r in ratings])
+        if len(ratingsbodies) != len(ratings):
+            raise forms.ValidationError(_('Only one rating from each ratings '
+                                          'body may be selected.'))
+        return ratings_ids
 
     def save(self, addon, commit=True):
         if (self.cleaned_data.get('DELETE') and
@@ -378,6 +431,36 @@ PreviewFormSet = modelformset_factory(Preview, formset=BasePreviewFormSet,
                                       extra=1)
 
 
+class BaseImageAssetFormSet(BaseFormSet):
+
+    def __init__(self, *args, **kw):
+        self.app = kw.pop('app')
+        super(BaseImageAssetFormSet, self).__init__(*args, **kw)
+
+        self.initial = APP_IMAGE_SIZES
+
+        # Reconstruct the forms according to the initial data.
+        self._construct_forms()
+        for data, form in zip(APP_IMAGE_SIZES, self.forms):
+            form.setup(data)
+            form.app = self.app
+
+            try:
+                form.instance = ImageAsset.objects.get(addon=self.app,
+                                                       slug=form.slug)
+            except ImageAsset.DoesNotExist:
+                form.instance = None
+
+    def save(self):
+        for f in self.forms:
+            f.save(self.app)
+
+
+ImageAssetFormSet = formset_factory(form=ImageAssetForm,
+                                    formset=BaseImageAssetFormSet,
+                                    can_delete=False, extra=0)
+
+
 class NewManifestForm(happyforms.Form):
     manifest = forms.URLField(verify_exists=False)
 
@@ -399,13 +482,12 @@ class PremiumForm(happyforms.Form):
                                    label=_lazy(u'App Price'),
                                    empty_label=None,
                                    required=False)
-    do_upsell = forms.TypedChoiceField(coerce=lambda x: bool(int(x)),
-                                       choices=APP_UPSELL_CHOICES,
-                                       widget=forms.RadioSelect(),
-                                       required=False)
     free = AddonChoiceField(queryset=Addon.objects.none(), required=False,
-                            empty_label='')
-    text = forms.CharField(widget=forms.Textarea(), required=False)
+                            label=_lazy(u'This is a paid upgrade of'),
+                            empty_label=_lazy(u'Not an upgrade'))
+    currencies = forms.MultipleChoiceField(
+        widget=forms.CheckboxSelectMultiple,
+        required=False, label=_lazy(u'Supported Non-USD Currencies'))
 
     def __init__(self, *args, **kw):
         self.extra = kw.pop('extra')
@@ -413,28 +495,35 @@ class PremiumForm(happyforms.Form):
         self.addon = self.extra['addon']
         kw['initial'] = {
             'premium_type': self.addon.premium_type,
-            'do_upsell': 0,
         }
         if self.addon.premium:
             kw['initial']['price'] = self.addon.premium.price
 
         upsell = self.addon.upsold
         if upsell:
-            kw['initial'].update({
-                'text': upsell.text,
-                'free': upsell.free,
-                'do_upsell': 1,
-            })
+            kw['initial']['free'] = upsell.free
+
+        if self.addon.premium and waffle.switch_is_active('currencies'):
+            kw['initial']['currencies'] = self.addon.premium.currencies
 
         super(PremiumForm, self).__init__(*args, **kw)
+
+        if waffle.switch_is_active('currencies'):
+            choices = (PriceCurrency.objects.values_list('currency', flat=True)
+                       .distinct())
+            self.fields['currencies'].choices = [(k, k)
+                                                 for k in choices if k]
+
         if self.addon.is_webapp():
+            self.fields['premium_type'].label = _lazy(u'Will your app '
+                                                       'use payments?')
             self.fields['price'].label = _(u'App Price')
-            self.fields['do_upsell'].choices = APP_UPSELL_CHOICES
+
         self.fields['free'].queryset = (self.extra['amo_user'].addons
-                                    .exclude(pk=self.addon.pk)
-                                    .filter(premium_type__in=amo.ADDON_FREES,
-                                            status__in=amo.VALID_STATUSES,
-                                            type=self.addon.type))
+            .exclude(pk=self.addon.pk)
+            .filter(premium_type__in=amo.ADDON_FREES,
+                    status__in=amo.VALID_STATUSES,
+                    type=self.addon.type))
         if (not self.initial.get('price') and
             len(list(self.fields['price'].choices)) > 1):
             # Tier 0 (Free) should not be the default selection.
@@ -451,16 +540,7 @@ class PremiumForm(happyforms.Form):
             raise_required()
         return self.cleaned_data['price']
 
-    def clean_text(self):
-        if (self.cleaned_data['do_upsell']
-            and not self.cleaned_data['text']):
-            raise_required()
-        return self.cleaned_data['text']
-
     def clean_free(self):
-        if (self.cleaned_data['do_upsell']
-            and not self.cleaned_data['free']):
-            raise_required()
         return self.cleaned_data['free']
 
     def save(self):
@@ -473,8 +553,7 @@ class PremiumForm(happyforms.Form):
             premium.save()
 
         upsell = self.addon.upsold
-        if (self.cleaned_data['do_upsell'] and
-            self.cleaned_data['text'] and self.cleaned_data['free']):
+        if self.cleaned_data['free']:
 
             # Check if this app was already a premium version for another app.
             if upsell and upsell.free != self.cleaned_data['free']:
@@ -482,10 +561,9 @@ class PremiumForm(happyforms.Form):
 
             if not upsell:
                 upsell = AddonUpsell(premium=self.addon)
-            upsell.text = self.cleaned_data['text']
             upsell.free = self.cleaned_data['free']
             upsell.save()
-        elif not self.cleaned_data['do_upsell'] and upsell:
+        elif not self.cleaned_data['free'] and upsell:
             upsell.delete()
 
         # Check for free -> paid for already public apps.
@@ -499,11 +577,16 @@ class PremiumForm(happyforms.Form):
             RereviewQueue.flag(self.addon, amo.LOG.REREVIEW_FREE_TO_PAID)
 
         self.addon.premium_type = premium_type
+
+        if self.addon.premium and waffle.switch_is_active('currencies'):
+            currencies = self.cleaned_data['currencies']
+            self.addon.premium.update(currencies=currencies)
+
         self.addon.save()
 
         # If they checked later in the wizard and then decided they want
         # to keep it free, push to pending.
-        if (not self.addon.needs_paypal() and self.addon.is_incomplete()):
+        if not self.addon.needs_paypal() and self.addon.is_incomplete():
             self.addon.mark_done()
 
 
@@ -581,20 +664,12 @@ class AppFormBasic(addons.forms.AddonFormBase):
 
 
 class PaypalSetupForm(happyforms.Form):
-    business_account = forms.ChoiceField(widget=forms.RadioSelect, choices=[],
-        label=_lazy(u'Do you already have a PayPal Premier '
-                     'or Business account?'))
     email = forms.EmailField(required=False,
                              label=_lazy(u'PayPal email address'))
 
-    def __init__(self, *args, **kw):
-        super(PaypalSetupForm, self).__init__(*args, **kw)
-        self.fields['business_account'].choices = (('yes', _lazy(u'Yes')),
-                                                   ('no', _lazy(u'No')))
-
     def clean(self):
         data = self.cleaned_data
-        if data.get('business_account') == 'yes' and not data.get('email'):
+        if not data.get('email'):
             msg = _(u'The PayPal email is required.')
             self._errors['email'] = self.error_class([msg])
 
@@ -707,26 +782,12 @@ class AppFormSupport(addons.forms.AddonFormBase):
         return super(AppFormSupport, self).save(commit)
 
 
-class CurrencyForm(happyforms.Form):
-    currencies = forms.MultipleChoiceField(widget=forms.CheckboxSelectMultiple,
-                                           required=False,
-                                           label=_lazy(u'Other currencies'))
-
-    def __init__(self, *args, **kw):
-        super(CurrencyForm, self).__init__(*args, **kw)
-        choices = (PriceCurrency.objects.values_list('currency', flat=True)
-                                .distinct())
-        self.fields['currencies'].choices = [(k, amo.PAYPAL_CURRENCIES[k])
-                                              for k in choices if k]
-
-
 class AppAppealForm(happyforms.Form):
     """
     If a developer's app is rejected he can make changes and request
     another review.
     """
-
-    release_notes = forms.CharField(
+    notes = forms.CharField(
         label=_lazy(u'Your comments'),
         required=False, widget=forms.Textarea(attrs={'rows': 2}))
 
@@ -735,19 +796,18 @@ class AppAppealForm(happyforms.Form):
         super(AppAppealForm, self).__init__(*args, **kw)
 
     def save(self):
-        v = self.product.versions.order_by('-created')[0]
-        v.releasenotes = self.cleaned_data['release_notes']
-        v.save()
-        amo.log(amo.LOG.EDIT_VERSION, v.addon, v)
-        # Mark app as pending again.
-        self.product.mark_done()
-        return v
+        version = self.product.versions.latest()
+        version.update(approvalnotes=self.cleaned_data['notes'])
+        amo.log(amo.LOG.EDIT_VERSION, self.product, version)
+        # Mark app and file as pending again.
+        self.product.update(status=amo.WEBAPPS_UNREVIEWED_STATUS)
+        version.all_files[0].update(status=amo.WEBAPPS_UNREVIEWED_STATUS)
+        return version
 
 
 class RegionForm(forms.Form):
-    regions = forms.MultipleChoiceField(required=True,
-        label=_lazy(u'Choose at least one region your app will '
-                     'be listed in:'),
+    regions = forms.MultipleChoiceField(required=False,
+        label=_lazy(u'Choose the regions your app will be listed in:'),
         choices=mkt.regions.REGIONS_CHOICES_NAME[1:],
         widget=forms.CheckboxSelectMultiple,
         error_messages={'required':
@@ -761,12 +821,11 @@ class RegionForm(forms.Form):
 
         # If we have excluded regions, uncheck those.
         # Otherwise, default to everything checked.
-        self.regions_before = (self.product.get_region_ids() or
-            mkt.regions.REGION_IDS)
+        self.regions_before = self.product.get_region_ids()
 
         # If we have future excluded regions, uncheck box.
         self.future_exclusions = self.product.addonexcludedregion.filter(
-            region=mkt.regions.FUTURE.id)
+            region=mkt.regions.WORLDWIDE.id)
 
         self.initial = {
             'regions': self.regions_before,
@@ -779,6 +838,14 @@ class RegionForm(forms.Form):
         if (games and self.product.categories.filter(id=games.id).exists()
             and not self.product.content_ratings_in(mkt.regions.BR)):
             self.disabled_regions.append(mkt.regions.BR.id)
+
+    def clean(self):
+        data = self.cleaned_data
+        if not data.get('regions') and not data.get('other_regions'):
+            raise forms.ValidationError(
+                _('You must select at least one region or '
+                  '"Other and new regions."'))
+        return data
 
     def save(self):
         before = set(self.regions_before)
@@ -810,7 +877,7 @@ class RegionForm(forms.Form):
             # Developer does not want future regions, then
             # exclude all future apps.
             g, c = AddonExcludedRegion.objects.get_or_create(
-                addon=self.product, region=mkt.regions.FUTURE.id)
+                addon=self.product, region=mkt.regions.WORLDWIDE.id)
             if c:
                 log.info(u'[Webapp:%s] Excluded from future regions.'
                          % self.product)

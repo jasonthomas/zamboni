@@ -9,20 +9,61 @@
         $this.attr('placeholder', $this.data('placeholder'));
     });
 
-    z.page.on('click', '#search-facets li.facet', function(e) {
+    // Add 'sel' class to active filter and set hidden input value.
+    z.page.on('click', '#filters .toggles a', function() {
+        selectMe($(this));
+        return false;
+    }).on('click', '#filters .confirm-action a', function() {
         var $this = $(this);
-        if ($this.hasClass('active')) {
-            if ($(e.target).is('a')) {
-                return;
-            }
-            $this.removeClass('active');
-        } else {
-            $this.closest('ul').removeClass('active');
-            $this.addClass('active');
-        }
+        selectMe($this);
+        $this.closest('.confirm-action').removeClass('show');
+        $('.picker').toggleClass('sel');
+        return false;
     });
 
-    var expandListings = false;
+
+    function selectMe($elm) {
+        var $myUL = $elm.closest('ul'),
+            val = '',
+            vars = z.getVars($elm[0].search);
+
+        if ($elm.hasClass('cancel')) {
+            return;
+        }
+        $myUL.find('a').removeClass('sel');
+
+
+        if ($myUL[0].id == 'filter-prices') {
+            val = vars.price || '';
+        } else if ($myUL[0].id == 'filter-categories') {
+            val = vars.cat || '';
+            $('.picker').text($elm.text());
+        } else if ($myUL[0].id == 'filter-sort') {
+            val = vars.sort || '';
+        }
+        $myUL.find('+ input[type=hidden]').val(val);
+        $elm.addClass('sel');
+    }
+
+    // Apply filters button.
+    z.page.on('click', '#filters .apply', _pd(function() {
+        $('#filters form').submit();
+    })).on('click', '#filters .picker', _pd(function() {
+        $('#filter-categories').addClass('show');
+        if ($('#filter-categories li').length > z.confirmBreakNum) {
+            $('#filter-categories').addClass('two-col');
+        } else {
+            $('#filter-categories').removeClass('two-col');
+        }
+        $(this).toggleClass('sel');
+    })).on('click', '.confirm-action .cancel', _pd(function(e) {
+        $(e.target).closest('.confirm-action').removeClass('show');
+    }));
+
+    // If we're on desktop, show graphical results - unless specified by user.
+    var expandListingsStored = localStorage.getItem('expand-listings');
+    var expandListings = expandListingsStored ? expandListingsStored === 'true' : z.capabilities.desktop;
+
     var $expandToggle = $('#site-header .expand');
 
     // Toggle app listing graphical/compact view.
@@ -33,10 +74,7 @@
 
     z.page.on('fragmentloaded', function() {
         if (z.body.data('page-type') === 'search') {
-            expandListings = localStorage.getItem('expand-listings') === 'true';
-            if (expandListings) {
-                setTrays(true);
-            }
+            setTrays(expandListings);
         }
     });
 

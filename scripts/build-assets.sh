@@ -19,12 +19,12 @@ find . -name '*.pyc' -or -name '*less.css' -or -name '*-min.css'-or -name '*-all
 
 if [ ! -d "$VENV/bin" ]; then
     echo "No virtualenv found.  Making one..."
-    virtualenv $VENV
+    virtualenv $VENV --system-site-packages
 fi
 
 source $VENV/bin/activate
 
-pip install -q -r requirements/compiled.txt
+pip install -U --exists-action=w --no-deps -q -r requirements/compiled.txt -r requirements/test.txt
 
 if [ ! -d "$VENDOR" ]; then
     echo "No vendor lib?  Cloning..."

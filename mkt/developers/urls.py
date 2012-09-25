@@ -1,5 +1,5 @@
-from django.conf.urls.defaults import patterns, url, include
-from django.shortcuts import redirect
+from django import http
+from django.conf.urls import include, patterns, url
 
 from lib.misc.urlconf_decorator import decorate
 
@@ -13,16 +13,19 @@ def paypal_patterns(prefix):
     return patterns('',
         url('^$', views.paypal_setup,
             name='mkt.developers.%s.paypal_setup' % prefix),
+        url('^bounce$', views.paypal_setup_confirm,
+            name='mkt.developers.%s.paypal_setup_bounce' % prefix,
+            kwargs={'source': 'paypal'}),
         url('^confirm$', views.paypal_setup_confirm,
             name='mkt.developers.%s.paypal_setup_confirm' % prefix,
             kwargs={'source': 'paypal'}),
         url('^details$', views.paypal_setup_confirm,
             name='mkt.developers.%s.paypal_setup_details' % prefix,
             kwargs={'source': 'developers'}),
-        url('^bounce$', views.paypal_setup_bounce,
-            name='mkt.developers.%s.paypal_setup_bounce' % prefix),
         url('^check$', views.paypal_setup_check,
             name='mkt.developers.%s.paypal_setup_check' % prefix),
+        url('^remove$', views.paypal_remove,
+            name='mkt.developers.%s.paypal_remove' % prefix),
     )
 
 
@@ -40,10 +43,23 @@ app_detail_patterns = patterns('',
     url('^publicise$', views.publicise, name='mkt.developers.apps.publicise'),
     url('^status$', views.status, name='mkt.developers.apps.versions'),
 
+    # TODO: '^versions/$'
+    url('^versions/(?P<version_id>\d+)$', views.version_edit,
+        name='mkt.developers.apps.versions.edit'),
+    url('^versions/delete$', views.version_delete,
+        name='mkt.developers.apps.versions.delete'),
+
     url('^payments$', views.payments, name='mkt.developers.apps.payments'),
     # PayPal-specific stuff.
     url('^paypal/', include(paypal_patterns('apps'))),
-    url('^paypal/', include(paypal_patterns('addons'))),
+
+    # Bluevia-specific stuff.
+    url('^bluevia$', views.get_bluevia_url,
+        name='mkt.developers.apps.get_bluevia_url'),
+    url('^bluevia/callback$', views.bluevia_callback,
+        name='mkt.developers.apps.bluevia_callback'),
+    url('^bluevia/remove$', views.bluevia_remove,
+        name='mkt.developers.apps.bluevia_remove'),
 
     # in-app payments.
     url('^in-app-config$', views.in_app_config,
@@ -64,6 +80,8 @@ app_detail_patterns = patterns('',
         name='mkt.developers.apps.upload_preview'),
     url('^upload_icon$', views.upload_media, {'upload_type': 'icon'},
         name='mkt.developers.apps.upload_icon'),
+    url('^upload_image$', views.upload_media, {'upload_type': 'image'},
+        name='mkt.developers.apps.upload_image'),
 
     url('^profile$', views.profile, name='mkt.developers.apps.profile'),
     url('^profile/remove$', views.remove_profile,
@@ -95,7 +113,7 @@ ajax_patterns = patterns('',
 urlpatterns = decorate(write, patterns('',
     # Redirect people who have /apps/ instead of /app/.
     ('^apps/\d+/.*',
-     lambda r: redirect(r.path.replace('apps', 'app', 1))),
+     lambda r: http.HttpResponseRedirect(r.path.replace('apps', 'app', 1))),
 
     # There's no validator yet, but this is where it will go.
     ## Standalone validator:
@@ -121,6 +139,7 @@ urlpatterns = decorate(write, patterns('',
     url('^ajax/app/%s/' % amo.APP_SLUG, include(ajax_patterns)),
 
     url('^terms$', views.terms, name='mkt.developers.apps.terms'),
+    url(r'^api$', views.api, name='mkt.developers.apps.api'),
 
     # Developer docs
     url('docs/(?P<doc_name>[-_\w]+)?$',

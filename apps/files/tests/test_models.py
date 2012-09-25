@@ -76,8 +76,7 @@ class TestFile(amo.tests.TestCase, amo.tests.AMOPaths):
     """
     Tests the methods of the File model.
     """
-
-    fixtures = ('base/addon_3615', 'base/addon_5579')
+    fixtures = ['base/addon_3615', 'base/addon_5579', 'base/platforms']
 
     def test_get_absolute_url(self):
         f = File.objects.get(id=67442)
@@ -231,6 +230,22 @@ class TestFile(amo.tests.TestCase, amo.tests.AMOPaths):
         f.version.addon.type = amo.ADDON_WEBAPP
         eq_(f.generate_filename(), 'testing-123-2.1.072.webapp')
 
+    def test_generate_webapp_fn_non_ascii(self):
+        f = File()
+        f.version = Version(version='0.1.7')
+        f.version.compatible_apps = (amo.FIREFOX,)
+        f.version.addon = Addon(app_slug=u' フォクすけ  といっしょ',
+                                type=amo.ADDON_WEBAPP)
+        eq_(f.generate_filename(), 'app-0.1.7.webapp')
+
+    def test_generate_webapp_fn_partial_non_ascii(self):
+        f = File()
+        f.version = Version(version='0.1.7')
+        f.version.compatible_apps = (amo.FIREFOX,)
+        f.version.addon = Addon(app_slug=u'myapp フォクすけ  といっしょ',
+                                type=amo.ADDON_WEBAPP)
+        eq_(f.generate_filename(), 'myapp-0.1.7.webapp')
+
     def test_pretty_filename(self):
         f = File.objects.get(id=67442)
         f.generate_filename()
@@ -261,7 +276,7 @@ class TestFile(amo.tests.TestCase, amo.tests.AMOPaths):
 
     def clean_files(self, f):
         if f.mirror_file_path and storage.exists(f.mirror_file_path):
-            storage.remove(f.mirror_file_path)
+            storage.delete(f.mirror_file_path)
         if not storage.exists(f.file_path):
             with storage.open(f.file_path, 'w') as fp:
                 fp.write('sample data\n')
@@ -416,6 +431,14 @@ class TestParseXpi(amo.tests.TestCase):
     def test_parse_dictionary(self):
         result = self.parse(filename='dictionary-test.xpi')
         eq_(result['type'], amo.ADDON_DICT)
+
+    def test_parse_dictionary_explicit_type(self):
+        result = self.parse(filename='dictionary-explicit-type-test.xpi')
+        eq_(result['type'], amo.ADDON_DICT)
+
+    def test_parse_dictionary_extension(self):
+        result = self.parse(filename='dictionary-extension-test.xpi')
+        eq_(result['type'], amo.ADDON_EXTENSION)
 
     def test_parse_jar(self):
         result = self.parse(filename='theme.jar')
@@ -730,12 +753,12 @@ class TestFileFromUpload(UploadTest):
     def test_size(self):
         upload = self.upload('extension')
         f = File.from_upload(upload, self.version, self.platform)
-        eq_(f.size, 2)
+        eq_(f.size, 2264)
 
     def test_size_small(self):
         upload = self.upload('alt-rdf')
         f = File.from_upload(upload, self.version, self.platform)
-        eq_(f.size, 1)
+        eq_(f.size, 675)
 
     def test_beta_version_non_public(self):
         # Only public add-ons can get beta versions.
@@ -1167,3 +1190,23 @@ class TestWatermarkCleanup(amo.tests.TestCase, amo.tests.AMOPaths):
             os.utime(os.path.join(self.folder, path), (old, old))
         cleanup_watermarked_file()
         assert not os.path.exists(self.folder)
+
+
+class TestSignedPath(amo.tests.TestCase):
+    fixtures = ['webapps/337141-steamcube']
+
+    def setUp(self):
+        self.file_ = File.objects.get(pk=81555)
+
+    def test_path(self):
+        path = (self.file_.file_path
+                    .replace('.webapp', '.signed.webapp')
+                    .replace(settings.ADDONS_PATH, settings.SIGNED_APPS_PATH))
+        eq_(self.file_.signed_file_path, path)
+
+    def test_reviewer_path(self):
+        path = (self.file_.file_path
+                    .replace('.webapp', '.signed.webapp')
+                    .replace(settings.ADDONS_PATH,
+                             settings.SIGNED_APPS_REVIEWER_PATH))
+        eq_(self.file_.signed_reviewer_file_path, path)

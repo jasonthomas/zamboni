@@ -1,32 +1,27 @@
-from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.forms.models import model_to_dict
 from django.shortcuts import redirect
 from django.utils.translation.trans_real import to_language
 
 import commonware.log
 import jingo
 import waffle
+from waffle.decorators import waffle_switch
 
 import amo
-import paypal
 from amo.decorators import login_required
-from amo.helpers import absolutify, urlparams
 from amo.urlresolvers import reverse
 from addons.forms import DeviceTypeForm
 from addons.models import Addon, AddonUser
-from lib.pay_server import client
-from market.models import AddonPaymentData
 from files.models import Platform
 from users.models import UserProfile
 
 from mkt.developers import tasks
 from mkt.developers.decorators import dev_required
-from mkt.developers.forms import (AppFormMedia, CategoryForm,
-                                  PaypalPaymentData, PreviewFormSet)
-from mkt.submit.forms import AppDetailsBasicForm, PaypalSetupForm
+from mkt.developers.forms import AppFormMedia, CategoryForm, PreviewFormSet
+from mkt.submit.forms import AppDetailsBasicForm
 from mkt.submit.models import AppSubmissionChecklist
+from mkt.themes.forms import NewThemeForm
 
 from . import forms
 from .decorators import read_dev_agreement_required, submit_step
@@ -35,9 +30,10 @@ from .decorators import read_dev_agreement_required, submit_step
 log = commonware.log.getLogger('z.submit')
 
 
-@login_required
 def submit(request):
     """Determine which step to redirect user to."""
+    if not request.user.is_authenticated():
+        return proceed(request)
     # If dev has already agreed, continue to next step.
     user = UserProfile.objects.get(pk=request.user.id)
     if user.read_dev_agreement:
@@ -48,11 +44,28 @@ def submit(request):
         return redirect('submit.app.terms')
 
 
+def proceed(request):
+    """
+    This is a fake "Terms" view that we overlay the login.
+    We link here from the Developer Hub landing page.
+    """
+    if request.user.is_authenticated():
+        return submit(request)
+    agreement_form = forms.DevAgreementForm({'read_dev_agreement': True},
+                                            instance=None)
+    return jingo.render(request, 'submit/terms.html', {
+        'step': 'terms',
+        'agreement_form': agreement_form,
+        'proceed': True,
+    })
+
+
 @login_required
 @submit_step('terms')
 def terms(request):
     # If dev has already agreed, continue to next step.
-    if request.amo_user.read_dev_agreement:
+    if (getattr(request, 'amo_user', None) and
+            request.amo_user.read_dev_agreement):
         if waffle.switch_is_active('allow-packaged-app-uploads'):
             return redirect('submit.app.choose')
         return redirect('submit.app.manifest')
@@ -122,8 +135,7 @@ def package(request):
     if request.method == 'POST' and form.is_valid():
         addon = Addon.from_upload(
             form.cleaned_data['upload'],
-            [Platform.objects.get(id=amo.PLATFORM_ALL.id)])
-        addon.get_latest_file().update(is_packaged=True)
+            [Platform.objects.get(id=amo.PLATFORM_ALL.id)], is_packaged=True)
 
         if addon.has_icon_in_manifest():
             # Fetch the icon, do polling.
@@ -188,8 +200,12 @@ def details(request, addon_id, addon):
         form_icon.save(addon)
         for preview in form_previews.forms:
             preview.save(addon)
+
+        tasks.generate_image_assets.delay(addon)
+
         AppSubmissionChecklist.objects.get(addon=addon).update(details=True)
-        return redirect('submit.app.payments', addon.app_slug)
+        addon.mark_done()
+        return redirect('submit.app.done', addon.app_slug)
 
     ctx = {
         'step': 'details',
@@ -197,131 +213,6 @@ def details(request, addon_id, addon):
     }
     ctx.update(forms)
     return jingo.render(request, 'submit/details.html', ctx)
-
-
-@dev_required
-@submit_step('payments')
-def payments(request, addon_id, addon):
-    form = forms.PremiumTypeForm(request.POST or None)
-    if request.POST and form.is_valid():
-        addon.update(premium_type=form.cleaned_data['premium_type'])
-
-        if addon.premium_type in [amo.ADDON_PREMIUM, amo.ADDON_PREMIUM_INAPP]:
-            return redirect('submit.app.payments.upsell', addon.app_slug)
-        if addon.premium_type == amo.ADDON_FREE_INAPP:
-            return redirect('submit.app.payments.paypal', addon.app_slug)
-
-        AppSubmissionChecklist.objects.get(addon=addon).update(payments=True)
-        addon.mark_done()
-        return redirect('submit.app.done', addon.app_slug)
-    return jingo.render(request, 'submit/payments.html', {
-                        'step': 'payments',
-                        'addon': addon,
-                        'form': form
-                        })
-
-
-@dev_required
-@submit_step('payments')
-def payments_upsell(request, addon_id, addon):
-    form = forms.UpsellForm(request.POST or None, request=request,
-                            extra={'addon': addon,
-                                   'amo_user': request.amo_user})
-    if request.POST and form.is_valid():
-        form.save()
-        return redirect('submit.app.payments.paypal', addon.app_slug)
-    return jingo.render(request, 'submit/payments-upsell.html', {
-                        'step': 'payments',
-                        'addon': addon,
-                        'form': form
-                        })
-
-
-@dev_required
-@submit_step('payments')
-def payments_paypal(request, addon_id, addon):
-    form = PaypalSetupForm(request.POST or None)
-    if request.POST and form.is_valid():
-        existing = form.cleaned_data['business_account']
-        if existing == 'later':
-            # We'll have a premium or similar account with no PayPal id
-            # at this point.
-            (AppSubmissionChecklist.objects.get(addon=addon)
-                                           .update(payments=True))
-            return redirect('submit.app.done', addon.app_slug)
-        if existing != 'yes':
-            # Go create an account.
-            # TODO: this will either become the API or something some better
-            # URL for the future.
-            return redirect(settings.PAYPAL_CGI_URL)
-
-        if waffle.flag_is_active(request, 'solitude-payments'):
-            obj = client.create_seller_paypal(addon)
-            client.patch_seller_paypal(pk=obj['resource_pk'],
-                         data={'paypal_id': form.cleaned_data['email']})
-
-        addon.update(paypal_id=form.cleaned_data['email'])
-        return redirect('submit.app.payments.bounce', addon.app_slug)
-    return jingo.render(request, 'submit/payments-paypal.html', {
-                        'step': 'payments',
-                        'addon': addon,
-                        'form': form
-                        })
-
-
-@dev_required
-@submit_step('payments')
-def payments_bounce(request, addon_id, addon):
-    dest = 'submission'
-    perms = ['REFUND', 'ACCESS_BASIC_PERSONAL_DATA',
-             'ACCESS_ADVANCED_PERSONAL_DATA']
-    if waffle.flag_is_active(request, 'solitude-payments'):
-        url = addon.get_dev_url('acquire_refund_permission')
-        url = absolutify(urlparams(url, dest=dest))
-        result = client.post_permission_url(data={'scope': perms, 'url': url})
-        paypal_url = result['token']
-    #TODO(solitude): remove these
-    else:
-        paypal_url = paypal.get_permission_url(addon, dest, perms)
-
-    return jingo.render(request, 'submit/payments-bounce.html', {
-                        'step': 'payments',
-                        'paypal_url': paypal_url,
-                        'addon': addon
-                        })
-
-
-@dev_required
-@submit_step('payments')
-def payments_confirm(request, addon_id, addon):
-    data = {}
-    # TODO(solitude): remove all references to AddonPaymentData.
-    if waffle.flag_is_active(request, 'solitude-payments'):
-        data = client.get_seller_paypal_if_exists(addon) or {}
-
-    adp, created = AddonPaymentData.objects.safer_get_or_create(addon=addon)
-    if not data:
-        data = model_to_dict(adp)
-
-    form = PaypalPaymentData(request.POST or data)
-    if request.method == 'POST' and form.is_valid():
-        if waffle.flag_is_active(request, 'solitude-payments'):
-            # TODO(solitude): when the migration of data is completed, we
-            # will be able to remove this.
-            pk = client.create_seller_for_pay(addon)
-            client.patch_seller_paypal(pk=pk, data=form.cleaned_data)
-
-        # TODO(solitude): remove this.
-        adp.update(**form.cleaned_data)
-        AppSubmissionChecklist.objects.get(addon=addon).update(payments=True)
-        addon.mark_done()
-        return redirect('submit.app.done', addon.app_slug)
-
-    return jingo.render(request, 'submit/payments-confirm.html', {
-                        'step': 'payments',
-                        'addon': addon,
-                        'form': form
-                        })
 
 
 @dev_required
@@ -358,3 +249,26 @@ def _resume(addon, step):
                                 args=[addon.app_slug]))
 
     return redirect(addon.get_dev_url('edit'))
+
+
+@waffle_switch('mkt-themes')
+@login_required
+def submit_theme(request):
+    form = NewThemeForm(data=request.POST or None,
+                        files=request.FILES or None,
+                        request=request)
+    if request.method == 'POST' and form.is_valid():
+        addon = form.save()
+        return redirect('submit.theme.done', addon.slug)
+    return jingo.render(request, 'themes/submit/submit.html',
+                        dict(form=form))
+
+
+@waffle_switch('mkt-themes')
+@login_required
+@dev_required
+def submit_theme_done(request, addon_id, addon):
+    if addon.is_public():
+        return redirect(addon.get_url_path())
+    return jingo.render(request, 'themes/submit/done.html',
+                        dict(addon=addon))

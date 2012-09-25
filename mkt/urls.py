@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.conf.urls.defaults import patterns, url, include
+from django.conf.urls import include, patterns, url
 from django.contrib import admin
 from django.shortcuts import redirect
 from django.views.decorators.cache import cache_page
@@ -13,20 +13,22 @@ from mkt.account.urls import (purchases_patterns, settings_patterns,
                               users_patterns as mkt_users_patterns)
 from mkt.developers.views import login
 from mkt.purchase.urls import bluevia_services_patterns
+from mkt.ratings.urls import theme_review_patterns
 from mkt.themes.urls import theme_patterns
+
 
 admin.autodiscover()
 
+handler403 = 'mkt.site.views.handler403'
 handler404 = 'mkt.site.views.handler404'
 handler500 = 'mkt.site.views.handler500'
 
 ADDON_ID = r"""(?P<addon_id>[^/<>"']+)"""
 
+
 urlpatterns = patterns('',
     # Home.
-    # NOTICE: This is just a placeholder until the carrier stores middleware
-    # goes live with regional stores.
-    url('^(?:telefonica/)?$', 'mkt.home.views.home', name='home'),
+    url('^$', 'mkt.home.views.home', name='home'),
 
     # App Detail pages.
     ('^app/%s/' % amo.APP_SLUG, include('mkt.detail.urls')),
@@ -39,6 +41,7 @@ urlpatterns = patterns('',
     ('^ecosystem/', lambda r: redirect('ecosystem.landing', permanent=True)),
 
     # Theme detail pages.
+    ('^theme/%s/reviews/' % ADDON_ID, include(theme_review_patterns)),
     ('^theme/%s/' % ADDON_ID, include('mkt.themes.urls')),
 
     # Theme browse pages.
@@ -48,7 +51,7 @@ urlpatterns = patterns('',
     ('^developers/', include('mkt.developers.urls')),
 
     # Submission.
-    ('^developers/submit/app/', include('mkt.submit.urls')),
+    ('^developers/submit/', include('mkt.submit.urls')),
 
     # In-app payments.
     ('^inapp-pay/', include('mkt.inapp_pay.urls')),

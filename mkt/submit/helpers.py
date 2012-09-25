@@ -37,10 +37,6 @@ def progress(request, addon, step):
     if not completed and step and step != 'terms':
         completed = ['terms']
 
-    # Payments step was skipped, so remove it.
-    if step == 'done' and 'payments' not in completed:
-        steps = del_by_key(steps, 'payments')
-
     c = dict(steps=steps, current=step, completed=completed)
     t = env.get_template('submit/helpers/progress.html').render(**c)
     return jinja2.Markup(t)

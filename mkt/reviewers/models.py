@@ -1,8 +1,10 @@
+from django.conf import settings
 from django.db import models
 
 import amo
 from apps.addons.models import Addon
-from apps.editors.models import CannedResponse
+from apps.editors.models import CannedResponse, EscalationQueue, RereviewQueue
+from users.models import UserForeignKey
 
 
 class AppCannedResponseManager(amo.models.ManagerBase):
@@ -18,27 +20,13 @@ class AppCannedResponse(CannedResponse):
         proxy = True
 
 
-class RereviewQueue(amo.models.ModelBase):
-    addon = models.ForeignKey(Addon, related_name='+')
+class ThemeLock(amo.models.ModelBase):
+    theme = models.OneToOneField('addons.Persona')
+    reviewer = UserForeignKey()
+    expiry = models.DateTimeField()
 
     class Meta:
-        db_table = 'rereview_queue'
-
-    @classmethod
-    def flag(cls, addon, event, message=None):
-        cls.objects.get_or_create(addon=addon)
-        if message:
-            amo.log(event, addon, addon.current_version,
-                    details={'comments': message})
-        else:
-            amo.log(event, addon, addon.current_version)
-
-
-class EscalationQueue(amo.models.ModelBase):
-    addon = models.ForeignKey(Addon, related_name='+')
-
-    class Meta:
-        db_table = 'escalation_queue'
+        db_table = 'theme_locks'
 
 
 def cleanup_queues(sender, instance, **kwargs):
@@ -46,5 +34,7 @@ def cleanup_queues(sender, instance, **kwargs):
     EscalationQueue.objects.filter(addon=instance).delete()
 
 
-models.signals.post_delete.connect(cleanup_queues, sender=Addon,
-                                   dispatch_uid='queue-addon-cleanup')
+# Don't add this signal in if we are not in the marketplace.
+if settings.MARKETPLACE:
+    models.signals.post_delete.connect(cleanup_queues, sender=Addon,
+                                       dispatch_uid='queue-addon-cleanup')

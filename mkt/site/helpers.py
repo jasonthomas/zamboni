@@ -1,6 +1,9 @@
 import json
 
+from django.conf import settings
+
 from jingo import register, env
+from jingo_minify import helpers as jingo_minify_helpers
 import jinja2
 from tower import ugettext as _
 import waffle
@@ -10,6 +13,32 @@ from amo.helpers import urlparams
 from amo.urlresolvers import reverse, get_outgoing_url
 from amo.utils import JSONEncoder
 from translations.helpers import truncate
+
+
+@jinja2.contextfunction
+@register.function
+def css(context, bundle, media=False, debug=None):
+    if debug is None:
+        debug = settings.TEMPLATE_DEBUG
+
+    # ?debug=true gives you unminified CSS for testing on -dev/prod.
+    if context['request'].GET.get('debug'):
+        debug = True
+
+    return jingo_minify_helpers.css(bundle, media, debug)
+
+
+@jinja2.contextfunction
+@register.function
+def js(context, bundle, debug=None, defer=False, async=False):
+    if debug is None:
+        debug = settings.TEMPLATE_DEBUG
+
+    # ?debug=true gives you unminified JS for testing on -dev/prod.
+    if context['request'].GET.get('debug'):
+        debug = True
+
+    return jingo_minify_helpers.js(bundle, debug, defer, async)
 
 
 def new_context(context, **kw):
@@ -30,26 +59,37 @@ def no_results():
 def market_button(context, product, receipt_type=None):
     request = context['request']
     if product.is_webapp():
-        faked_purchase = False
-        purchased = (request.amo_user and
-                     product.pk in request.amo_user.purchase_ids())
-        # App authors are able to install their apps free of charge.
-        if (not purchased and
-            request.check_ownership(product, require_author=True)):
-            purchased = faked_purchase = True
+        purchased = False
         classes = ['button', 'product']
-        label = product.get_price()
-        data_attrs = {
-            'manifestUrl': product.manifest_url
-        }
+        data_attrs = {'manifestUrl': product.manifest_url,
+                      'is_packaged': json.dumps(product.is_packaged)}
+
+        # Handle premium apps.
         if product.is_premium() and product.premium:
+            # User has purchased app.
+            purchased = (request.amo_user and
+                         product.pk in request.amo_user.purchase_ids())
+
+            # App authors are able to install their apps free of charge.
+            if (not purchased and
+                    request.check_ownership(product, require_author=True)):
+                purchased = True
+
             classes.append('premium')
+            if waffle.switch_is_active('disabled-payments'):
+                classes.append('disabled')
+
+        if purchased:
+            label = _('Install')
+        else:
+            label = product.get_price()
+
+        # Free apps and purchased apps get active install buttons.
         if not product.is_premium() or purchased:
             classes.append('install')
-            label = _('Install')
+
         c = dict(product=product, label=label, purchased=purchased,
-                 faked_purchase=faked_purchase, data_attrs=data_attrs,
-                 classes=' '.join(classes))
+                 data_attrs=data_attrs, classes=' '.join(classes))
         t = env.get_template('site/helpers/webapp_button.html')
     return jinja2.Markup(t.render(c))
 
@@ -66,21 +106,20 @@ def product_as_dict(request, product, purchased=None, receipt_type=None):
     url = (reverse('receipt.issue', args=[product.app_slug])
            if receipt_type else product.get_detail_url('record'))
     src = request.GET.get('src', '')
+
     ret = {
         'id': product.id,
         'name': product.name,
         'categories': [unicode(cat.name) for cat in
                        product.categories.all()],
-        'manifestUrl': product.manifest_url,
+        'manifestUrl': product.get_manifest_url(),
         'preapprovalUrl': reverse('detail.purchase.preapproval',
                                   args=[product.app_slug]),
         'recordUrl': urlparams(url, src=src),
         'author': author,
         'author_url': author_url,
         'iconUrl': product.get_icon_url(64),
-        'is_packaged': product.has_packaged_files,
-        'package_url': (product.current_version.all_files[0].get_url_path(src)
-                        if product.has_packaged_files else ''),
+        'is_packaged': product.is_packaged,
     }
 
     # Add in previews to the dict.
@@ -280,7 +319,6 @@ def admin_site_links():
             ('Manage EcoSystem', reverse('mkt.zadmin.ecosystem')),
             ('Purge data from memcache', reverse('zadmin.memcache')),
             ('Purge pages from zeus', reverse('zadmin.hera')),
-            ('View graphite trends', reverse('amo.graphite', args=['addons'])),
             ('Create a new OAuth Consumer',
              reverse('zadmin.oauth-consumer-create')),
             ('Generate error', reverse('zadmin.generate-error')),
@@ -293,3 +331,21 @@ def admin_site_links():
 def external_href(url):
     t = 'target="_blank" href="%s"' % get_outgoing_url(unicode(url))
     return jinja2.Markup(t)
+
+
+@register.function
+@jinja2.contextfunction
+def get_login_link(context, to=None):
+    request = context['request']
+    # If to is given use that, otherwise get from request.
+    to = to or request.GET.get('to')
+
+    # If logged in, just return the URL.
+    if request.user.is_authenticated():
+        return to
+
+    url = reverse('users.login')
+    # Don't allow loop backs to login.
+    if to == url:
+        to = None
+    return urlparams(url, to=to)

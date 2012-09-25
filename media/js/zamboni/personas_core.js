@@ -14,7 +14,7 @@ function dispatchPersonaEvent(aType, aNode, callback, forceHttps)
         var browsertheme = $(aNode).attr('data-browsertheme');
 
         if (forceHttps) {
-            browsertheme = browsertheme.replace(/http:\/\//g, 'https://')
+            browsertheme = browsertheme.replace(/http:\/\//g, 'https://');
         }
 
         $(aNode).attr('persona', browsertheme);

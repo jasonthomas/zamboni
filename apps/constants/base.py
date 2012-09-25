@@ -1,8 +1,6 @@
 from datetime import datetime
 import re
 
-from django.conf import settings
-
 from tower import ugettext_lazy as _
 
 
@@ -21,6 +19,7 @@ STATUS_PURGATORY = 10  # A temporary home; bug 614686
 STATUS_DELETED = 11
 STATUS_REJECTED = 12  # This applies only to apps (for now)
 STATUS_PUBLIC_WAITING = 13  # bug 740967
+STATUS_REVIEW_PENDING = 14  # Themes queue, reviewed, needs further action.
 
 STATUS_CHOICES = {
     STATUS_NULL: _(u'Incomplete'),
@@ -185,11 +184,6 @@ ADDON_SEARCH_TYPES = [
     ADDON_SEARCH,
     ADDON_LPAPP,
 ]
-if not settings.SEARCH_EXCLUDE_PERSONAS:
-    ADDON_SEARCH_TYPES.append(ADDON_PERSONA)
-
-# Types searchable via the admin console
-ADDON_ADMIN_SEARCH_TYPES = ADDON_SEARCH_TYPES + [ADDON_PLUGIN]
 
 MARKETPLACE_TYPES = [ADDON_PERSONA, ADDON_WEBAPP]
 

@@ -2,9 +2,10 @@
 
 {% block title %}{{ mkt_page_title('Mozillian Preview') }}{% endblock %}
 
-{% block bodyclass %}login {{ super() }}{% endblock %}
+{% block bodyclass %}home login {{ super() }}{% endblock %}
 
 {% block content %}
+  <h1 id="top">{{ _('Firefox Marketplace') }}</h1>
   {% set dst = request.GET.get('to') %}
   {% if dst and dst not in (url('ecosystem.landing'), url('mkt.developers.apps')) %}
     <section class="notification-box error full">
@@ -16,15 +17,7 @@
   <section id="welcome">
     <div>
       <div class="prose">
-        <h1>Mozillian Preview</h1>
-        <p>
-          Our doors are now open for invited Mozillians to help test an early
-          preview of the Marketplace. We'll open for wider testing in just a
-          few months.
-        </p>
-        <p>
-          If you've received an invitation, please log in below.
-        </p>
+        {% include 'home/walled_prose.html' %}
       </div>
       <p class="proceed">
         <a class="button prominent browserid" href="#">{{ _('Log in / Register') }}</a>
@@ -48,7 +41,6 @@
           <a href="{{ url('site.terms') }}">
             {{ _('Terms of Use') }}</a>
         </nav>
-        {% include 'site/includes/languages.html' %}
       </div>
     </div>
   </footer>

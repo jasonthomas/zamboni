@@ -1,4 +1,4 @@
-from django.conf.urls.defaults import include, patterns, url
+from django.conf.urls import include, patterns, url
 
 from mkt.purchase.urls import app_purchase_patterns
 from mkt.ratings.urls import review_patterns
@@ -8,6 +8,7 @@ from . import views
 
 urlpatterns = patterns('',
     url('^$', views.detail, name='detail'),
+    url('^manifest.webapp$', views.manifest, name='detail.manifest'),
     url('^abuse$', views.abuse, name='detail.abuse'),
     url('^abuse/recaptcha$', views.abuse_recaptcha,
         name='detail.abuse.recaptcha'),

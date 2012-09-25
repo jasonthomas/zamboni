@@ -19,14 +19,42 @@ Currently only two legged OAuth authentication is supported. This is focused on
 clients who would like to create multiple apps on the app store from an end
 point.
 
-To get started you will need to get an OAuth token created in the site for you.
-For more information on creating an OAuth token, contact the `marketplace
-team`_, letting them know which Marketplace user account you would like to use
-for authentication. Changing this later will give problems accessing old data.
+When you are first developing your API to communicate with the Marketplace, you
+should use the staging server to test your API. When it's complete, you can
+request a production token.
 
-The user account that is used **must** accept the Terms of Service for the
-marketplace by logging into the Marketplace, viewing the `terms`_ and accepting
-them.
+Staging server
+++++++++++++++
+
+The staging server is at https://marketplace.allizom.org.
+
+We make no guarantees on the uptime of the staging server. Also data may be
+occasionally purged, causing the deletion of apps and tokens.
+
+1. Login to the staging server using Persona:
+   https://marketplace.allizom.org/login
+
+2. Once logged in, read and accept the terms of service for the Marketplace
+   at: https://marketplace.allizom.org/developers/terms
+
+3. Generate a new key at: https://marketplace.allizom.org/developers/api
+
+Production server
++++++++++++++++++
+
+The production server is at https://marketplace.mozilla.org.
+
+1. Login to the production server using Persona:
+   https://marketplace.mozilla.org
+
+2. Once logged in, read and accept the terms of service for the Marketplace
+   at: https://marketplace.mozilla.org/developers/terms
+
+3. You cannot generate your own tokens. Please contact a `Marketplace
+   representative`_.
+
+Using OAuth Tokens
+^^^^^^^^^^^^^^^^^^
 
 Once you've got your token, you will need to ensure that the OAuth token is
 sent correctly in each request.
@@ -98,19 +126,19 @@ This API requires authentication.
 
 To validate an app::
 
-        POST /en-US/api/apps/validation/
+        POST /api/apps/validation/
 
 Body data should contain the manifest in JSON::
 
         {"manifest": "http://test.app.com/manifest"}
 
-        GET /en-US/api/apps/validation/123/
+        GET /api/apps/validation/123/
 
 This will return the status of the validation. Validation not processed yet::
 
         {"id": "123",
          "processed": false,
-         "resource_uri": "/en-US/api/apps/validation/123/",
+         "resource_uri": "/api/apps/validation/123/",
          "valid": false,
          "validation": ""}
 
@@ -118,7 +146,7 @@ Validation processed and good::
 
         {"id": "123",
          "processed": true,
-         "resource_uri": "/en-US/api/apps/validation/123/",
+         "resource_uri": "/api/apps/validation/123/",
          "valid": true,
          "validation": ""}
 
@@ -126,7 +154,7 @@ Validation processed and an error::
 
         {"id": "123",
          "processed": true,
-         "resource_uri": "/en-US/api/apps/validation/123/",
+         "resource_uri": "/api/apps/validation/123/",
          "valid": false,
          "validation": {
            "errors": 1, "messages": [{
@@ -138,7 +166,7 @@ Validation processed and an error::
 
 You can always check the validation later::
 
-        GET /en-US/api/apps/validation/123/
+        GET /api/apps/validation/123/
 
 Create
 ======
@@ -146,7 +174,7 @@ Create
 This API requires authentication and a successfully validated manifest. To
 create an app with your validated manifest::
 
-        POST /en-US/api/apps/app/
+        POST /api/apps/app/
 
 Body data should contain the manifest id from the validate call and other data
 in JSON::
@@ -166,7 +194,7 @@ the data using the manifest and return values so far::
          "name": "MozillaBall",
          "premium_type": "free",
          "privacy_policy": null,
-         "resource_uri": "/en-US/api/apps/app/1/",
+         "resource_uri": "/api/apps/app/1/",
          "slug": "mozillaball",
          "status": 0,
          "summary": "Exciting Open Web development action!",
@@ -183,7 +211,7 @@ Update
 
 This API requires authentication and a successfully created app::
 
-        PUT /en-US/api/apps/app/<app id>/
+        PUT /api/apps/app/<app id>/
 
 The body contains JSON for the data to be posted.
 
@@ -226,7 +254,7 @@ This API requires authentication and a successfully created app.
 
 To view details of an app, including its review status::
 
-        GET /en-US/api/apps/app/<app id>/
+        GET /api/apps/app/<app id>/
 
 Returns the status of the app::
 
@@ -246,7 +274,7 @@ Create
 
 Create a screenshot or video::
 
-        PUT /en-US/api/apps/preview/?app=<app id>
+        PUT /api/apps/preview/?app=<app id>
 
 The body should contain the screenshot or video to be uploaded in the following
 format::
@@ -268,7 +296,7 @@ Returns the screenshot id::
 
         {"position": 1, "thumbnail_url": "/img/uploads/...",
          "image_url": "/img/uploads/...", "filetype": "image/png",
-         "resource_uri": "/en-US/api/apps/preview/1/"}
+         "resource_uri": "/api/apps/preview/1/"}
 
 Get
 +++
@@ -276,13 +304,13 @@ Get
 Get information about the screenshot or video::
 
 
-        GET /en-US/api/apps/preview/<preview id>/
+        GET /api/apps/preview/<preview id>/
 
 Returns::
 
-        {"addon": "/en-US/api/apps/app/1/", "id": 1, "position": 1,
+        {"addon": "/api/apps/app/1/", "id": 1, "position": 1,
          "thumbnail_url": "/img/uploads/...", "image_url": "/img/uploads/...",
-         "filetype": "image/png", "resource_uri": "/en-US/api/apps/preview/1/"}
+         "filetype": "image/png", "resource_uri": "/api/apps/preview/1/"}
 
 
 Delete
@@ -290,7 +318,7 @@ Delete
 
 Delete a screenshot of video::
 
-        DELETE /en-US/api/apps/preview/<preview id>/
+        DELETE /api/apps/preview/<preview id>/
 
 This will return a 204 if the screenshot has been deleted.
 
@@ -300,7 +328,7 @@ Enabling an App
 Once all the data has been completed and at least one screenshot created, you
 can push the app to the review queue::
 
-        PATCH /en-US/api/apps/status/<app id>/
+        PATCH /api/apps/status/<app id>/
         {"status": "pending"}
 
 * `status` (optional): key statuses are
@@ -321,7 +349,7 @@ Valid transitions that users can initiate are:
   the required data is there. If not, you'll get an error containing the
   reason. For example::
 
-        PATCH /en-US/api/apps/status/<app id>/
+        PATCH /api/apps/status/<app id>/
         {"status": "pending"}
 
         Status code: 400
@@ -347,7 +375,7 @@ No authentication required.
 
 To find a list of categories available on the marketplace::
 
-        GET /en-US/api/apps/category/
+        GET /api/apps/category/
 
 Returns the list of categories::
 
@@ -356,7 +384,7 @@ Returns the list of categories::
              "previous": null, "total_count": 1},
          "objects":
             [{"id": 1, "name": "Webapp",
-              "resource_uri": "/en-US/api/apps/category/1/"}]
+              "resource_uri": "/api/apps/category/1/"}]
         }
 
 Use the `id` of the category in your app updating.
@@ -368,13 +396,13 @@ No authentication required.
 
 To find a list of apps in a category on the marketplace::
 
-        GET /en-US/api/apps/search/
+        GET /api/apps/search/
 
 Returns a list of the apps sorted by relevance::
 
         {"meta": {},
          "objects":
-            [{"absolute_url": "http://../en-US/app/marble-run-1/",
+            [{"absolute_url": "http://../app/marble-run-1/",
               "premium_type": 3, "slug": "marble-run-1", id="26",
               "icon_url": "http://../addon_icons/0/26-32.png",
               "resource_uri": null
@@ -388,11 +416,10 @@ Arguments:
 
 Example, to specify a category sorted by rating::
 
-        GET /en-US/api/apps/search/?cat=1&sort=rating
+        GET /api/apps/search/?cat=1&sort=rating
 
 .. _`MDN`: https://developer.mozilla.org
-.. _`marketplace team`: marketplace-team@mozilla.org
+.. _`Marketplace representative`: marketplace-team@mozilla.org
 .. _`django-tastypie`: https://github.com/toastdriven/django-tastypie
 .. _`APIs for Add-ons`: https://developer.mozilla.org/en/addons.mozilla.org_%28AMO%29_API_Developers%27_Guide
 .. _`example marketplace client`: https://github.com/mozilla/MarketplaceClientExample
-.. _`terms`: https://marketplace.mozilla.org/developers/terms

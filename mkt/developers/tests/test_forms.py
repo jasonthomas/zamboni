@@ -12,13 +12,13 @@ import amo
 import amo.tests
 from amo.tests.test_helpers import get_image_path
 from addons.models import Addon
+from editors.models import RereviewQueue
 from files.helpers import copyfileobj
 from market.models import Price
 from users.models import UserProfile
 
 import mkt
 from mkt.developers import forms
-from mkt.reviewers.models import RereviewQueue
 from mkt.webapps.models import AddonExcludedRegion
 
 
@@ -72,24 +72,16 @@ class TestPreviewForm(amo.tests.TestCase):
 
 class TestPaypalSetupForm(amo.tests.TestCase):
 
-    def test_email_not_required(self):
-        data = {'business_account': 'no',
-                'email': ''}
-        assert forms.PaypalSetupForm(data=data).is_valid()
-
     def test_email_required(self):
-        data = {'business_account': 'yes',
-                'email': ''}
+        data = {'email': ''}
         assert not forms.PaypalSetupForm(data=data).is_valid()
 
     def test_email_gotten(self):
-        data = {'business_account': 'yes',
-                'email': 'foo@bar.com'}
+        data = {'email': 'foo@bar.com'}
         assert forms.PaypalSetupForm(data=data).is_valid()
 
     def test_email_malformed(self):
-        data = {'business_account': 'yes',
-                'email': 'foo'}
+        data = {'email': 'foo'}
         assert not forms.PaypalSetupForm(data=data).is_valid()
 
 
@@ -219,7 +211,7 @@ class TestRegionForm(amo.tests.WebappTestCase):
         eq_(form.initial['other_regions'], True)
 
     def test_initial_excluded_in_regions_and_future_regions(self):
-        for region in [mkt.regions.BR, mkt.regions.UK, mkt.regions.FUTURE]:
+        for region in [mkt.regions.BR, mkt.regions.UK, mkt.regions.WORLDWIDE]:
             AddonExcludedRegion.objects.create(addon=self.app,
                                                region=region.id)
 
@@ -232,3 +224,16 @@ class TestRegionForm(amo.tests.WebappTestCase):
         form = forms.RegionForm(data=None, **self.kwargs)
         eq_(form.initial['regions'], regions)
         eq_(form.initial['other_regions'], False)
+
+    def test_worldwide_only(self):
+        form = forms.RegionForm(data={'other_regions': 'on'}, **self.kwargs)
+        eq_(form.is_valid(), True)
+        form.save()
+        eq_(self.app.get_region_ids(True), [mkt.regions.WORLDWIDE.id])
+
+    def test_no_regions(self):
+        form = forms.RegionForm(data={}, **self.kwargs)
+        eq_(form.is_valid(), False)
+        eq_(form.errors,
+            {'__all__': ['You must select at least one region or '
+                         '"Other and new regions."']})

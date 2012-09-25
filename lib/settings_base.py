@@ -6,6 +6,7 @@ import logging
 import socket
 
 from django.utils.functional import lazy
+from metlog.config import client_from_dict_config
 
 WAFFLE_TABLE_SUFFIX = 'amo'
 LOG_TABLE_SUFFIX = ''
@@ -122,23 +123,28 @@ AMO_LANGUAGES = (
     'zh-CN', 'zh-TW',
 )
 
+# Explicit conversion of a shorter language code into a more specific one.
+SHORTER_LANGUAGES = {
+    'en': 'en-US', 'ga': 'ga-IE', 'pt': 'pt-PT', 'sv': 'sv-SE', 'zh': 'zh-CN'
+}
+
 # Not shown on the site, but .po files exist and these are available on the
 # L10n dashboard.  Generally languages start here and move into AMO_LANGUAGES.
 HIDDEN_LANGUAGES = ('cy', 'sr', 'sr-Latn', 'tr')
 
 
-def lazy_langs():
+def lazy_langs(languages):
     from product_details import product_details
     if not product_details.languages:
         return {}
     return dict([(i.lower(), product_details.languages[i]['native'])
-                 for i in AMO_LANGUAGES])
+                 for i in languages])
 
 # Where product details are stored see django-mozilla-product-details
 PROD_DETAILS_DIR = path('lib/product_json')
 
 # Override Django's built-in with our native names
-LANGUAGES = lazy(lazy_langs, dict)()
+LANGUAGES = lazy(lazy_langs, dict)(AMO_LANGUAGES)
 RTL_LANGUAGES = ('ar', 'fa', 'fa-IR', 'he')
 
 LANGUAGE_URL_MAP = dict([(i.lower(), i) for i in AMO_LANGUAGES])
@@ -220,6 +226,11 @@ GUARDED_ADDONS_PATH = NETAPP_STORAGE + '/guarded-addons'
 # Used for storing watermarked addons for the app.
 WATERMARKED_ADDONS_PATH = NETAPP_STORAGE + '/watermarked-addons'
 
+# Used for storing signed webapps.
+SIGNED_APPS_PATH = NETAPP_STORAGE + '/signed-apps'
+# Special reviewer signed ones for special people.
+SIGNED_APPS_REVIEWER_PATH = NETAPP_STORAGE + '/signed-apps-reviewer'
+
 # Absolute path to a writable directory shared by all servers. No trailing
 # slash.
 # Example: /data/uploads
@@ -228,11 +239,6 @@ UPLOADS_PATH = NETAPP_STORAGE + '/uploads'
 # File path for add-on files that get rsynced to mirrors.
 # /mnt/netapp_amo/addons.mozilla.org-remora/public-staging
 MIRROR_STAGE_PATH = NETAPP_STORAGE + '/public-staging'
-
-# URL prefix for admin media -- CSS, JavaScript and images. Make sure to use a
-# trailing slash.
-# Examples: "http://foo.com/media/", "/media/".
-ADMIN_MEDIA_PREFIX = '/admin-media/'
 
 # paths that don't require an app prefix
 SUPPORTED_NONAPPS = ('about', 'admin', 'apps', 'blocklist', 'credits',
@@ -387,8 +393,8 @@ INSTALLED_APPS = (
     'djcelery',
     'django_extensions',
     'django_nose',
-    'raven.contrib.django',
     'gunicorn',
+    'raven.contrib.django',
     'piston',
     'waffle',
 
@@ -797,7 +803,11 @@ MINIFY_BUNDLES = {
         ),
         'zamboni/editors': (
             'js/zamboni/editors.js',
-            'js/lib/highcharts.src.js'
+            'js/lib/highcharts.src.js',
+            'js/impala/formset.js',
+            'js/lib/jquery.hoverIntent.js',
+            'js/lib/jquery.zoomBox.js',
+            'js/mkt/themes_review.js',
         ),
         'zamboni/files': (
             'js/lib/diff_match_patch_uncompressed.js',
@@ -902,6 +912,7 @@ PRIVATE_MIRROR_URL = '/_privatefiles'
 ADDON_ICONS_PATH = UPLOADS_PATH + '/addon_icons'
 COLLECTIONS_ICON_PATH = UPLOADS_PATH + '/collection_icons'
 PREVIEWS_PATH = UPLOADS_PATH + '/previews'
+IMAGEASSETS_PATH = UPLOADS_PATH + '/imageassets'
 PERSONAS_PATH = UPLOADS_PATH + '/personas'
 USERPICS_PATH = UPLOADS_PATH + '/userpics'
 PACKAGER_PATH = os.path.join(TMP_PATH, 'packager')
@@ -909,6 +920,7 @@ ADDON_ICONS_DEFAULT_PATH = os.path.join(MEDIA_ROOT, 'img/addon-icons')
 
 PREVIEW_THUMBNAIL_PATH = (PREVIEWS_PATH + '/thumbs/%s/%d.png')
 PREVIEW_FULL_PATH = (PREVIEWS_PATH + '/full/%s/%d.%s')
+IMAGEASSET_FULL_PATH = (IMAGEASSETS_PATH + '/%s/%d.%s')
 
 # URL paths
 # paths for images, e.g. mozcdn.com/amo or '/static'
@@ -921,6 +933,8 @@ PREVIEW_THUMBNAIL_URL = (STATIC_URL +
         '/img/uploads/previews/thumbs/%s/%d.png?modified=%d')
 PREVIEW_FULL_URL = (STATIC_URL +
         '/img/uploads/previews/full/%s/%d.%s?modified=%d')
+IMAGEASSET_FULL_URL = (STATIC_URL +
+        '/img/uploads/imageassets/%s/%d.%s?modified=%d')
 USERPICS_URL = STATIC_URL + '/img/uploads/userpics/%s/%s/%s.png?modified=%d'
 # paths for uploaded extensions
 COLLECTION_ICON_URL = (STATIC_URL +
@@ -1122,10 +1136,35 @@ LOGGING = {
         'suds': {'handlers': ['null']},
         'z.task': {'level': logging.INFO},
         'z.es': {'level': logging.INFO},
+        'z.metlog': {'level': logging.INFO},
         's.client': {'level': logging.INFO},
         'nose': {'level': logging.WARNING},
     },
 }
+
+
+METLOG_CONF = {
+    'logger': 'zamboni',
+    'plugins': {
+        'cef': ('metlog_cef.cef_plugin:config_plugin', {}),
+
+        # The sentry_project_id maps to the project ID that
+        # the sentry server has assigned to the 'sink' 
+        # that raven will send messages into.
+        # For dev instances, you can leave the dummy value of
+        # 2, but for actual live instances you will want to 
+        # make sure your project ID corresponds to what is in 
+        # your actual sentry instance.
+        },
+    'sender': {
+        'class': 'metlog.senders.logging.StdLibLoggingSender',
+        'logger_name': 'z.metlog',
+    },
+}
+
+METLOG = client_from_dict_config(METLOG_CONF)
+
+USE_METLOG_FOR_CEF = False
 
 CEF_PRODUCT = "amo"
 
@@ -1197,6 +1236,7 @@ def read_only_mode(env):
 
 # Uploaded file limits
 MAX_ICON_UPLOAD_SIZE = 4 * 1024 * 1024
+MAX_IMAGE_UPLOAD_SIZE = 4 * 1024 * 1024  # Image assets (tiles, promos)
 MAX_VIDEO_UPLOAD_SIZE = 4 * 1024 * 1024
 MAX_PHOTO_UPLOAD_SIZE = MAX_ICON_UPLOAD_SIZE
 MAX_PERSONA_UPLOAD_SIZE = 300 * 1024
@@ -1476,7 +1516,8 @@ RUN_ES_TESTS = False
 
 # The configuration for seclusion the client that speaks to solitude.
 # A tuple of the solitude hosts that seclusion will speak to.
-SECLUSION_HOSTS = ()
+SECLUSION_HOSTS = ('',)
+
 # The oAuth key and secret that solitude needs.
 SECLUSION_KEY = ''
 SECLUSION_SECRET = ''

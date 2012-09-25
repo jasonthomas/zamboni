@@ -1,7 +1,7 @@
-
 // is the captured node exempt from fragment loading?
 function fragmentFilter(el) {
-    var href = el.getAttribute('href') || el.getAttribute('action');
+    var href = el.getAttribute('href') || el.getAttribute('action'),
+        $el = $(el);
     return !href || href.substr(0,4) == 'http' ||
             href.substr(0,7) === 'mailto:' ||
             href.substr(0,11) === 'javascript:' ||
@@ -11,7 +11,7 @@ function fragmentFilter(el) {
             href.indexOf('/statistics/') !== -1 ||
             href.indexOf('?modified=') !== -1 ||
             el.getAttribute('target') === '_blank' ||
-            $(el).hasClass('post');
+            $el.hasClass('post') || $el.hasClass('sync');
 }
 
 (function(container, nodeFilter) {
@@ -19,8 +19,23 @@ function fragmentFilter(el) {
         timeout = false,
         fragmentCache = {};
     if (z.capabilities.replaceState) {
-        var $loading = $('<div>', {'class': 'loading-fragment'})
-                        .prependTo($('#site-header'));
+        var $loading = $('<div>', {'class': 'loading-fragment overlay',
+                                   'html': '<em></em>'})
+                        .prependTo($('body'));
+
+        // Hijack <form> submission
+        z.body.on('submit', 'form', function(e) {
+            var form = $(this);
+            // only trap GETs for now.
+            if (form.attr('method').toLowerCase() !== "get") return;
+            e.preventDefault();
+            var action = form.attr('action');
+            //strip existing queryparams off the action.
+            var link = document.createElement('a');
+            link.href = action;
+            var path = link.pathname + '?' + form.serialize();
+            form.trigger('loadfragment', path);
+        });
 
         // capture clicks in our target environment
         z.body.on('click', 'a', function(e) {
@@ -44,7 +59,7 @@ function fragmentFilter(el) {
         // start the loading indicator
         function startLoading() {
             timeout = setTimeout(function() {
-                $loading.addClass('active');
+                $loading.addClass('show');
             }, threshold);
             loadTimer = new Date().getTime();
         }
@@ -53,7 +68,7 @@ function fragmentFilter(el) {
         function endLoading() {
             clearTimeout(timeout);
             _.delay(function() {
-                $loading.removeClass('active');
+                $loading.removeClass('show');
             }, 400);
             stick.custom({
                 'window.performance.timing.fragment.loaded':
@@ -128,16 +143,20 @@ function fragmentFilter(el) {
             if (!popped) history.pushState(newState, false, href);
 
             container.trigger('fragmentloaded', [href, popped, newState]);
-
         }
 
+        var prefetch_timeout;
         z.page.on('fragmentloaded', function() {
+            if (prefetch_timeout) {
+                clearTimeout(prefetch_timeout);
+            }
             console.log('get ready...');
-            setTimeout(prefetch, 1000);
+            prefetch_timeout = setTimeout(prefetch, 1000);
         });
         function prefetch() {
             var links = z.page.find('[data-prefetch]'),
                 href;
+            prefetch_timeout = null;
             for (var i=0; i<links.length; i++) {
                 href = links[i].getAttribute('href');
                 if (!fragmentCache[href]) {

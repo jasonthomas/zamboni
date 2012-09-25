@@ -1,5 +1,6 @@
+from django import http
 from django.conf import settings
-from django.shortcuts import get_list_or_404, get_object_or_404, redirect
+from django.shortcuts import get_list_or_404, get_object_or_404
 
 import amo
 from amo.models import manual_order
@@ -8,6 +9,9 @@ from addons.decorators import addon_view_factory
 from addons.models import Addon, Category, AddonCategory
 from addons.views import _category_personas as _category_themes
 from discovery.views import get_featured_personas
+from reviews.models import Review
+from reviews.views import get_flags
+from mkt.search.views import _app_search
 
 import jingo
 from waffle.decorators import waffle_switch
@@ -21,15 +25,22 @@ def detail(request, addon):
     """Theme details page."""
     theme = addon.persona
 
-    categories = addon.all_categories
+    categories = [category for category in addon.all_categories if
+                  category.application.id == amo.FIREFOX.id]
     if categories:
         qs = Addon.objects.public().filter(categories=categories[0])
         category_themes = _category_themes(qs, limit=6)
     else:
         category_themes = None
 
+    reviews = Review.objects.latest().filter(addon=addon)
+
     data = {
         'product': addon,
+        'reviews': reviews[:2],
+        'flags': get_flags(request, reviews),
+        'has_review': request.user.is_authenticated() and
+                      reviews.filter(user=request.user.id).exists(),
         'categories': categories,
         'category_themes': category_themes,
         'author_themes': theme.authors_other_addons(request.APP)[:3],
@@ -94,7 +105,7 @@ def _search(request, category=None):
 
     # If category is not listed as a facet, then remove redirect to search.
     if ctx.get('redirect'):
-        return redirect(ctx['redirect'])
+        return http.HttpResponseRedirect(ctx['redirect'])
 
     return jingo.render(request, 'search/results.html', ctx)
 
