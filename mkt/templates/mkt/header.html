@@ -7,7 +7,7 @@
       <a href="{{ url('account.settings') }}" class="header-button icon settings left">{{ _('Settings') }}</a>
       <a href="#" id="nav-back" class="header-button icon back left"><b>{{ _('Back') }}</b></a>
       <a href="#" class="header-button icon search right">{{ _('Search') }}</a>
-      <a href="#" class="header-button icon cancel right">{{ _('Cancel') }}</a>
+      <a href="#" class="header-button cancel right">{{ _('Cancel') }}</a>
       <a href="#" class="header-button filter right">{{ _('Filter') }}</a>
       <a href="#" class="header-button icon expand right">{{ _('Expand') }}</a>
       {% block search %}
@@ -15,17 +15,18 @@
         {% set search_form = SimpleSearchForm(data) %}
         <form method="GET" id="search" action="{{ url('search.search') }}">
           <input id="search-q" type="text" name="q" autocomplete="off" title=""
-                 placeholder="{{ _('Search') }}"
+                 placeholder="{{ category.name if category else _('Search') }}"
+                 data-placeholder-default="{{ _('Search') }}"
                  value="{{ search_form.q.value() }}">
           {% if search_form.cat.value() %}
             {{ search_form.cat }}
           {% endif %}
-          <div id="site-search-suggestions"
-               data-cat="apps" data-src="{{ url('search.suggestions') }}"></div>
         </form>
       {% endblock %}
     </nav>
     {% endif %}
   </section>
 </header>
+<div id="site-search-suggestions"
+               data-cat="apps" data-src="{{ url('search.suggestions') }}"></div>
 <div class="overlay nav-overlay"></div>

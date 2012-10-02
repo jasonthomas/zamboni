@@ -1,7 +1,7 @@
 (function() {
     function getButton(product) {
         // Look up button by its manifest URL.
-        return $(format('.button[data-manifestUrl="{0}"]', product.manifestUrl));
+        return $(format('.button[data-manifest_url="{0}"]', product.manifest_url));
     }
 
     function setButton($button, text, cls) {
@@ -58,7 +58,7 @@
                 revertButton($button);
             }
         }, 30000);
-    }).bind('app_install_success', function(e, product, installedNow) {
+    }).bind('app_install_success', function(e, installer, product, installedNow) {
         var $button = getButton(product);
         if (installedNow) {
             var $installed = $('#installed'),
@@ -69,8 +69,9 @@
                 $how.show();
             }
         }
-        setButton($button, gettext('Installed'), 'installed');
-    }).bind('app_purchase_error app_install_error', function(e, product, msg) {
+        z.apps[product.manifest_url] = installer;
+        setButton($button, gettext('Launch'), 'launch');
+    }).bind('app_purchase_error app_install_error', function(e, installer, product, msg) {
         var $button = getButton(product),
             errSummary;
 

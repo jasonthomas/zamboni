@@ -16,7 +16,16 @@
   {% set active_cat = None %}
 {% endif %}
 
-{% block title %}{{ mkt_page_title(_('Search Results')) }}{% endblock %}
+{% if browse %}
+  {% set title = category.name if category else _('Apps') %}
+{% else %}
+  {% set title = _('Search Results') %}
+{% endif %}
+
+{% set pagetitle = mkt_page_title(title) %}
+{% set pagetype = 'search' %}
+
+{% set bodyclass = 'search' %}
 
 {% block extrahead %}
   <meta name="WT.oss" content="{{ query_term }}">
@@ -24,10 +33,6 @@
 {% endblock %}
 
 {# if applied_filters might be useful later #}
-
-{% block bodyclass %}search{% endblock %}
-
-{% block pagetype %}search{% endblock %}
 
 {% block content %}
   {{ mkt_breadcrumbs(product, crumbs) }}
@@ -41,7 +46,7 @@
     <div class="filters-body">
       <form action="{{ url('search.search') }}" method="get">
         <div>
-          {% if prices and not waffle.switch('disabled-payments') %}
+          {% if prices and not waffle.switch('disabled-payments') and request.GAIA %}
             <h2>{{ _('Filter by price') }}</h2>
             <ul class="toggles c" id="filter-prices">
               {% for price in prices %}
@@ -54,7 +59,7 @@
                 </li>
               {% endfor %}
             </ul>
-            <input type="hidden" name="price" value="">
+            <input type="hidden" name="price" value="{{ query['price'] }}">
           {% endif %}
 
           {% if categories %}

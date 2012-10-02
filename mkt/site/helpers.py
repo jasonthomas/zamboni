@@ -61,7 +61,7 @@ def market_button(context, product, receipt_type=None):
     if product.is_webapp():
         purchased = False
         classes = ['button', 'product']
-        data_attrs = {'manifestUrl': product.manifest_url,
+        data_attrs = {'manifest_url': product.get_manifest_url(),
                       'is_packaged': json.dumps(product.is_packaged)}
 
         # Handle premium apps.
@@ -94,7 +94,8 @@ def market_button(context, product, receipt_type=None):
     return jinja2.Markup(t.render(c))
 
 
-def product_as_dict(request, product, purchased=None, receipt_type=None):
+def product_as_dict(request, product, purchased=None, receipt_type=None,
+                    src=''):
 
     # Dev environments might not have authors set.
     author = ''
@@ -105,14 +106,14 @@ def product_as_dict(request, product, purchased=None, receipt_type=None):
 
     url = (reverse('receipt.issue', args=[product.app_slug])
            if receipt_type else product.get_detail_url('record'))
-    src = request.GET.get('src', '')
+    src = src or request.GET.get('src', '')
 
     ret = {
         'id': product.id,
         'name': product.name,
         'categories': [unicode(cat.name) for cat in
                        product.categories.all()],
-        'manifestUrl': product.get_manifest_url(),
+        'manifest_url': product.get_manifest_url(),
         'preapprovalUrl': reverse('detail.purchase.preapproval',
                                   args=[product.app_slug]),
         'recordUrl': urlparams(url, src=src),
@@ -120,6 +121,7 @@ def product_as_dict(request, product, purchased=None, receipt_type=None):
         'author_url': author_url,
         'iconUrl': product.get_icon_url(64),
         'is_packaged': product.is_packaged,
+        'src': src
     }
 
     # Add in previews to the dict.
@@ -188,13 +190,13 @@ def market_tile(context, product, link=True, src=''):
         is_reviewer = acl.check_reviewer(request)
         receipt_type = 'developer' if is_dev or is_reviewer else None
         product_dict = product_as_dict(request, product, purchased=purchased,
-                                       receipt_type=receipt_type)
+                                       receipt_type=receipt_type, src=src)
         product_dict['prepareNavPay'] = reverse('bluevia.prepare_pay',
                                                 args=[product.app_slug])
 
         data_attrs = {
             'product': json.dumps(product_dict, cls=JSONEncoder),
-            'manifestUrl': product.manifest_url,
+            'manifest_url': product.get_manifest_url(),
             'src': src
         }
         if product.is_premium() and product.premium:

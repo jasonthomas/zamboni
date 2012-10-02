@@ -51,8 +51,27 @@
     a {
         font-weight: normal;
     }
-    p + p {
+    p {
         color: @medium-gray;
+        font-size: 12px;
+        &.toggle {
+            color: @dark-gray;
+            cursor: pointer;
+            font-weight: 600;
+        }
+    }
+    .toggle {
+        &:hover a {
+            text-decoration: underline;
+        }
+        + div {
+            margin-top: 10px;
+        }
+    }
+    address {
+        color: @note-gray;
+        font-size: 12px;
+        margin: 10px 0 10px 15px;
     }
 }
 

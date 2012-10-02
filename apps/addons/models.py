@@ -24,7 +24,8 @@ import json_field
 from tower import ugettext_lazy as _
 import waffle
 
-from addons.utils import ReverseNameLookup, get_featured_ids, get_creatured_ids
+from addons.utils import get_featured_ids, get_creatured_ids
+
 import amo.models
 from amo.decorators import use_master
 from amo.fields import DecimalCharField
@@ -409,7 +410,6 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
             send_mail(subject, email_msg, recipient_list=to)
         else:
             super(Addon, self).delete()
-        ReverseNameLookup(self.is_webapp()).delete(id)
         from . import tasks
         tasks.delete_preview_files.delay(id)
         tasks.unindex_addons.delay([id])
@@ -427,9 +427,10 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
         if not locale_is_set:
             addon.default_locale = to_language(translation.get_language())
         if addon.is_webapp():
-            addon.manifest_url = upload.name
-            addon.app_domain = addon.domain_from_url(addon.manifest_url)
             addon.is_packaged = is_packaged
+            if not is_packaged:
+                addon.manifest_url = upload.name
+                addon.app_domain = addon.domain_from_url(addon.manifest_url)
         addon.save()
         Version.from_upload(upload, addon, platforms)
         amo.log(amo.LOG.CREATE_ADDON, addon)
@@ -637,7 +638,7 @@ class Addon(amo.models.OnChangeMixin, amo.models.ModelBase):
         cache_key = '%s:%s:%s:%s:%s' % (ns_key, app_id, app_version, platform,
                                         compat_mode)
         version_id = cache.get(cache_key)
-        if version_id != None:
+        if version_id is not None:
             log.info(u'Found compatible version in cache: %s => %s' % (
                      cache_key, version_id))
             if version_id == 0:
@@ -1405,20 +1406,6 @@ class AddonDeviceType(amo.models.ModelBase):
 
     def device(self):
         return amo.DEVICE_TYPES[self.device_type]
-
-
-@receiver(dbsignals.post_save, sender=Addon,
-          dispatch_uid='addons.update.name.table')
-def update_name_table(sender, **kw):
-    log.debug('post_save signal called to update name table.')
-    from . import cron
-    if not kw.get('raw'):
-        addon = kw['instance']
-        if addon.name:
-            data = {'name_id': addon.name_id, 'id': addon.id,
-                    'type': addon.type}
-            log.debug('Build reverse name lookup with data: %s' % data)
-            cron._build_reverse_name_lookup([data], clear=True)
 
 
 @receiver(signals.version_changed, dispatch_uid='version_changed')

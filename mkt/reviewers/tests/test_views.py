@@ -4,12 +4,15 @@ import json
 import time
 from itertools import cycle
 
+from django import test
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
 from django.core.files.storage import default_storage as storage
+from django.db import transaction
 
 import mock
+from nose import SkipTest
 from nose.tools import eq_, ok_
 from pyquery import PyQuery as pq
 import requests
@@ -27,6 +30,8 @@ from devhub.models import ActivityLog, AppLog
 from editors.models import (CannedResponse, EscalationQueue, RereviewQueue,
                             ReviewerScore)
 from files.models import File
+from lib.crypto import packaged
+from lib.crypto.tests import mock_sign
 import mkt.constants.reviewers as rvw
 from mkt.reviewers.models import ThemeLock
 from mkt.submit.tests.test_views import BasePackagedAppTest
@@ -685,6 +690,39 @@ class TestEscalationQueue(AppReviewerTest, AccessMixin, FlagsMixin):
         eq_(EscalationQueue.objects.filter(addon=app).exists(), False)
 
 
+class TestReviewTransaction(amo.tests.TestCase):
+    fixtures = ['base/platforms', 'base/users', 'webapps/337141-steamcube']
+
+    def get_app(self):
+        return Webapp.uncached.get(id=337141)
+
+    @mock.patch('lib.crypto.packaged.sign')
+    def test_public_sign_failure(self, sign):
+        raise SkipTest
+        # This test will fail because test-utils disables all transaction
+        # changes by using disable_transaction_methods. We'll need to fix that
+        # before continuing with this test.
+        sign.side_effect = ValueError
+
+        self.app = self.get_app()
+        self.app.update(status=amo.STATUS_PENDING, is_packaged=True)
+        self.version = self.app.current_version
+        self.version.files.all().update(status=amo.STATUS_PENDING)
+
+        files = list(self.version.files.values_list('id', flat=True))
+        eq_(self.get_app().status, amo.STATUS_PENDING)
+        transaction.commit()
+
+        with self.assertRaises(ValueError):
+            self.client.login(username='editor@mozilla.com',
+                              password='password')
+            self.client.post(
+                    reverse('reviewers.apps.review', args=[self.app.app_slug]),
+                    {'action': 'public', 'comments': 'something',
+                     'addon_files': files})
+        eq_(self.get_app().status, amo.STATUS_PENDING)
+
+
 class TestReviewApp(AppReviewerTest, AccessMixin, AMOPaths):
     fixtures = ['base/platforms', 'base/users', 'webapps/337141-steamcube']
 
@@ -721,7 +759,7 @@ class TestReviewApp(AppReviewerTest, AccessMixin, AMOPaths):
         content = pq(self.client.get(self.url).content)
         assert content('#queue-escalation').length
 
-    @mock.patch.object(settings, 'DEBUG', False)
+    @mock.patch.object(settings, 'ALLOW_SELF_REVIEWS', False)
     def test_cannot_review_my_app(self):
         AddonUser.objects.create(addon=self.app,
             user=UserProfile.objects.get(username='editor'))
@@ -1824,6 +1862,7 @@ class TestGetSigned(BasePackagedAppTest, amo.tests.TestCase):
         self.client.login(username='regular@mozilla.com', password='password')
         eq_(self.client.get(self.url).status_code, 403)
 
+    @mock.patch.object(packaged, 'sign', mock_sign)
     def test_reviewer(self):
         self.setup_files()
         res = self.client.get(self.url)

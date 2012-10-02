@@ -1,3 +1,4 @@
+import datetime
 import os
 
 from lib.settings_base import *
@@ -40,6 +41,7 @@ USE_CARRIER_URLS = True
 # url resolvers.
 CARRIER_URLS = ['telefonica']
 
+MKT_FEEDBACK_EMAIL = 'apps-feedback@mozilla.com'
 MKT_REVIEWERS_EMAIL = 'app-reviews@mozilla.org'
 MKT_SENIOR_EDITORS_EMAIL = 'amo-admin-reviews@mozilla.org'
 MKT_SUPPORT_EMAIL = 'marketplace-developer-support@mozilla.org'
@@ -121,6 +123,7 @@ if REGION_STORES:
 MIDDLEWARE_CLASSES += [
     'mkt.site.middleware.VaryOnAJAXMiddleware',
     'mkt.site.middleware.MobileDetectionMiddleware',
+    'mkt.site.middleware.GaiaDetectionMiddleware',
 
     # TODO: Remove this when we remove `request.can_view_consumer`.
     'amo.middleware.DefaultConsumerMiddleware',
@@ -177,7 +180,11 @@ NO_CONSUMER_MODULES = (
     'versions.views',
     'mkt.account.views',
     'mkt.browse.views',
-    'mkt.detail.views',
+    'mkt.detail.views.detail',
+    'mkt.detail.views.detail.abuse',
+    'mkt.detail.views.detail.abuse.recaptcha',
+    'mkt.detail.views.detail.privacy',
+    'mkt.detail.views.app_activity',
     'mkt.ratings.views',
     'mkt.payments.views',
     'mkt.stats.views',
@@ -190,7 +197,9 @@ NO_CONSUMER_MODULES = (
 NO_LOGIN_REQUIRED_MODULES = (
     'csp.views.policy',
     'csp.views.report',
+    'mkt.detail.views.manifest',
     'mkt.developers',
+    'mkt.downloads',
     'mkt.lookup',
     'mkt.reviewers',
     'mkt.submit',
@@ -304,12 +313,27 @@ APPCACHE_FALLBACK_PATHS = {
 # If you use wildcards here the real paths to the file(s) will be
 # expanded using glob.glob()
 
+
 def APPCACHE_MEDIA_TO_CACHE():
     from jingo_minify import helpers
-    return [
-        'js/mkt/consumer-min.js?build=%s' % helpers.BUILD_ID_JS,
-        'css/mkt/consumer-min.css?build=%s' % helpers.BUILD_ID_CSS
-    ]
+    bundle = 'mkt/consumer'
+
+    # TODO(Kumar) refactor jingo-minify so we don't have to copy/paste this
+    # logic.
+    js_build_id = helpers.BUILD_ID_JS
+    bundle_full = "js:%s" % bundle
+    if bundle_full in helpers.BUNDLE_HASHES:
+        js_build_id = helpers.BUNDLE_HASHES[bundle_full]
+
+    css_build_id = helpers.BUILD_ID_CSS
+    bundle_full = "css:%s" % bundle
+    if bundle_full in helpers.BUNDLE_HASHES:
+        css_build_id = helpers.BUNDLE_HASHES[bundle_full]
+
+    return (
+        'js/%s-min.js?build=%s' % (bundle, js_build_id),
+        'css/%s-min.css?build=%s' % (bundle, css_build_id),
+    )
 
 
 # Are you working locally? place the following line in your settings_local:
@@ -348,3 +372,19 @@ GEOIP_DEFAULT_TIMEOUT = .2
 AMO_LANGUAGES = ('en-US', 'es', 'pt-BR')
 LANGUAGES = lazy(lazy_langs, dict)(AMO_LANGUAGES)
 LANGUAGE_URL_MAP = dict([(i.lower(), i) for i in AMO_LANGUAGES])
+
+# Not shown on the site, but .po files exist and these are available on the
+# L10n dashboard.  Generally languages start here and move into AMO_LANGUAGES.
+# This list also enables translation edits.
+HIDDEN_LANGUAGES = (
+    # List of languages from AMO's settings (excluding mkt's active locales).
+    'af', 'ar', 'bg', 'ca', 'cs', 'da', 'de', 'el', 'eu', 'fa',
+    'fi', 'fr', 'ga-IE', 'he', 'hu', 'id', 'it', 'ja', 'ko', 'mn', 'nl', 'pl',
+    'pt-PT', 'ro', 'ru', 'sk', 'sl', 'sq', 'sv-SE', 'uk', 'vi',
+    'zh-CN', 'zh-TW',
+    # The hidden list from AMO's settings:
+    'cy', 'sr', 'sr-Latn', 'tr',
+)
+
+# Update this each time there's a major update.
+DEV_AGREEMENT_LAST_UPDATED = datetime.date(2012, 2, 23)

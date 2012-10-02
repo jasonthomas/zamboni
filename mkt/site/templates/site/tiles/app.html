@@ -7,7 +7,9 @@
 <{{ tag }} class="{{ classes }}"
   {% if link %}href="{{ product.get_url_path()|urlparams(src=data_attrs.src) }}"{% endif %}
   {% for k, v in data_attrs.items() %} data-{{ k }}="{{ v }}"{% endfor %}>
-  <img class="icon mobile_tile" alt="{{ _('icon') }}" src="{{ product.get_image_asset_url('mobile_tile') }}">
+  <img class="icon mobile_tile" alt="{{ _('icon') }}"
+       src="{{ product.get_image_asset_url('mobile_tile') }}"
+       data-hue="{{ product.get_image_asset_hue('mobile_tile') }}">
   <img class="icon" alt="{{ _('icon') }}" src="{{ product.get_icon_url(64) }}">
   <div class="info">
     <h3>{{ product.name }}</h3>
@@ -21,16 +23,19 @@
     <div class="price vital">{{ product.get_price() }}</div>
     {% if waffle.switch('ratings') %}
       <div class="rating vital">
-        {{ product.average_rating|float|stars }}
-        {% if product.total_reviews %}
-          <span class="cnt">
-            {% trans num=product.total_reviews, cnt=product.total_reviews|numberfmt %}
-              {{ cnt }} Rating
-            {% pluralize %}
-              {{ cnt }} Ratings
-            {% endtrans %}
-          </span>
-       {% endif %}
+        {% if tag != "a" %}<a href="{{ product.get_ratings_url() }}"
+                              class="rating_link">{% endif %}
+          {{ product.average_rating|float|stars }}
+          {% if product.total_reviews %}
+            <span class="cnt">
+              {% trans num=product.total_reviews, cnt=product.total_reviews|numberfmt %}
+                {{ cnt }} Rating
+              {% pluralize %}
+                {{ cnt }} Ratings
+              {% endtrans %}
+            </span>
+         {% endif %}
+       {% if tag != "a" %}</a>{% endif %}
       </div>
     {% endif %}
   </div>

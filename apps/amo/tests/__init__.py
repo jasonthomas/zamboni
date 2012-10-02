@@ -35,6 +35,7 @@ from applications.models import Application, AppVersion
 from bandwagon.models import Collection
 from files.helpers import copyfileobj
 from files.models import File, Platform
+from lib.es.signals import reset, process
 from market.models import AddonPremium, Price, PriceCurrency
 from versions.models import ApplicationsVersions, Version
 
@@ -199,6 +200,10 @@ def mock_es(f):
     return decorated
 
 
+def days_ago(days):
+    return datetime.now() - timedelta(days=days)
+
+
 class TestCase(RedisTest, test_utils.TestCase):
     """Base class for all amo tests."""
     client_class = TestClient
@@ -208,6 +213,7 @@ class TestCase(RedisTest, test_utils.TestCase):
     def setUpClass(cls):
         if cls.mock_es:
             [p.start() for p in ES_patchers]
+        reset.send(None)  # Reset all the ES tasks on hold.
         super(TestCase, cls).setUpClass()
 
     @classmethod
@@ -220,11 +226,6 @@ class TestCase(RedisTest, test_utils.TestCase):
 
     def _pre_setup(self):
         super(TestCase, self)._pre_setup()
-        self.reset_featured_addons()
-
-    def reset_featured_addons(self):
-        from addons.cron import reset_featured_addons
-        reset_featured_addons()
         cache.clear()
 
     @contextmanager
@@ -378,7 +379,7 @@ class TestCase(RedisTest, test_utils.TestCase):
         GroupUser.objects.create(group=group, user=user_obj)
 
     def days_ago(self, days):
-        return datetime.now() - timedelta(days=days)
+        return days_ago(days)
 
 
 class AMOPaths(object):
@@ -409,8 +410,12 @@ class AMOPaths(object):
 
     @staticmethod
     def sample_key():
-        path = 'mkt/webapps/tests/sample.key'
-        return os.path.join(settings.ROOT, path)
+        return os.path.join(settings.ROOT,
+                            'mkt/webapps/tests/sample.key')
+
+    def sample_packaged_key(self):
+        return os.path.join(settings.ROOT,
+                            'mkt/webapps/tests/sample.packaged.pem')
 
     def mozball_image(self):
         return os.path.join(settings.ROOT,
@@ -601,7 +606,13 @@ class ESTestCase(TestCase):
         cls.refresh()
 
     @classmethod
+    def send(cls):
+        # Send all the ES tasks on hold.
+        process.send(None)
+
+    @classmethod
     def refresh(cls, index='default', timesleep=0):
+        process.send(None)
         cls.es.refresh(settings.ES_INDEXES[index], timesleep=timesleep)
 
     @classmethod

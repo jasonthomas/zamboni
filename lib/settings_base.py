@@ -230,6 +230,11 @@ WATERMARKED_ADDONS_PATH = NETAPP_STORAGE + '/watermarked-addons'
 SIGNED_APPS_PATH = NETAPP_STORAGE + '/signed-apps'
 # Special reviewer signed ones for special people.
 SIGNED_APPS_REVIEWER_PATH = NETAPP_STORAGE + '/signed-apps-reviewer'
+# The path to the key used for signed apps receipt key if the signing server
+# is not active.
+SIGNED_APPS_KEY = ''
+# A seperate signing server for signing packaged apps.
+SIGNED_APPS_SERVER_ACTIVE = False
 
 # Absolute path to a writable directory shared by all servers. No trailing
 # slash.
@@ -484,6 +489,7 @@ MINIFY_BUNDLES = {
             'css/impala/footer.less',
             'css/impala/faux-zamboni.less',
             'css/impala/collection-stats.less',
+            'css/zamboni/themes.less',
         ),
         'zamboni/impala': (
             'css/impala/base.css',
@@ -1149,12 +1155,14 @@ METLOG_CONF = {
         'cef': ('metlog_cef.cef_plugin:config_plugin', {}),
 
         # The sentry_project_id maps to the project ID that
-        # the sentry server has assigned to the 'sink' 
+        # the sentry server has assigned to the 'sink'
         # that raven will send messages into.
         # For dev instances, you can leave the dummy value of
-        # 2, but for actual live instances you will want to 
-        # make sure your project ID corresponds to what is in 
+        # 2, but for actual live instances you will want to
+        # make sure your project ID corresponds to what is in
         # your actual sentry instance.
+        'raven': ('metlog_raven.raven_plugin:config_plugin',
+                   {'sentry_project_id': 2}),
         },
     'sender': {
         'class': 'metlog.senders.logging.StdLibLoggingSender',
@@ -1165,6 +1173,7 @@ METLOG_CONF = {
 METLOG = client_from_dict_config(METLOG_CONF)
 
 USE_METLOG_FOR_CEF = False
+USE_METLOG_FOR_RAVEN = False
 
 CEF_PRODUCT = "amo"
 
@@ -1531,3 +1540,13 @@ SIMULATE_NAV_PAY = False
 
 # Set this to True if you want region stores (eg: marketplace).
 REGION_STORES = False
+
+# When the dev. agreement gets updated and you need users to re-accept it
+# change this date. You won't want to do this for minor format changes.
+# The tuple is passed through to datetime.date, so please use a valid date
+# tuple. If the value is None, then it will just not be used at all.
+DEV_AGREEMENT_LAST_UPDATED = None
+
+# If you want to allow self-reviews for add-ons/apps, then enable this.
+# In production we do not want to allow this.
+ALLOW_SELF_REVIEWS = False

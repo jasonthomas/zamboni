@@ -40,6 +40,7 @@ from paypal.check import Check
 from stats.models import Contribution
 from translations.models import Translation
 from users.models import UserProfile
+from versions.models import Version
 
 
 class AppHubTest(amo.tests.TestCase):
@@ -178,14 +179,54 @@ class TestAppDashboard(AppHubTest):
             'Expected message about incompleted add-on')
         eq_(doc('.more-actions-popup').length, 0)
 
+    def test_packaged_version(self):
+        app = self.get_app()
+        version = Version.objects.create(addon=app, version='1.23')
+        app.update(_current_version=version, is_packaged=True)
+        self.make_mine()
+        doc = pq(self.client.get(self.url).content)
+        eq_(doc('.item[data-addonid=%s] .item-current-version' % app.id
+                ).text(),
+            'Packaged App Version: 1.23')
+
+    @mock.patch('mkt.webapps.tasks.update_cached_manifests')
+    def test_pending_version(self, ucm):
+        ucm.return_value = True
+
+        app = self.get_app()
+        self.make_mine()
+        app.update(is_packaged=True)
+        next_version = Version.objects.create(addon=app, version='1.24')
+        doc = pq(self.client.get(self.url).content)
+        eq_(doc('.item[data-addonid=%s] .item-latest-version' % app.id
+                ).text(),
+            'Pending Version: 1.24')
+
     def test_action_links(self):
         self.create_switch('app-stats')
         app = self.get_app()
-        app.update(public_stats=True)
+        app.update(public_stats=True, is_packaged=False)
         self.make_mine()
         doc = pq(self.client.get(self.url).content)
         expected = [
             ('Edit Listing', app.get_dev_url()),
+            ('Manage Authors', app.get_dev_url('owner')),
+            ('Manage Payments', app.get_dev_url('payments')),
+            ('View Listing', app.get_url_path()),
+        ]
+        amo.tests.check_links(expected, doc('a.action-link'))
+        amo.tests.check_links([('View Statistics', app.get_stats_url())],
+            doc('a.stats-link'), verify=False)
+
+    def test_action_links_packaged(self):
+        self.create_switch('app-stats')
+        app = self.get_app()
+        app.update(public_stats=True, is_packaged=True)
+        self.make_mine()
+        doc = pq(self.client.get(self.url).content)
+        expected = [
+            ('Edit Listing', app.get_dev_url()),
+            ('Add New Version', app.get_dev_url('versions')),
             ('Manage Authors', app.get_dev_url('owner')),
             ('Manage Payments', app.get_dev_url('payments')),
             ('View Listing', app.get_url_path()),
@@ -634,6 +675,7 @@ class TestMarketplace(MarketplaceMixin, amo.tests.TestCase):
                              self.addon.get_dev_url('payments'))
 
 
+@mock.patch.object(settings, 'TASK_USER_ID', 4043307)
 class TestIssueRefund(amo.tests.TestCase):
     fixtures = ['base/users', 'webapps/337141-steamcube']
 
@@ -916,6 +958,7 @@ class TestIssueRefund(amo.tests.TestCase):
         self.assertRedirects(r, self.addon.get_dev_url('refunds'), 302)
 
 
+@mock.patch.object(settings, 'TASK_USER_ID', 4043307)
 class TestRefunds(amo.tests.TestCase):
     fixtures = ['base/users', 'webapps/337141-steamcube']
 
@@ -1632,3 +1675,30 @@ class TestTerms(amo.tests.TestCase):
         res = self.client.post(self.url, {'read_dev_agreement': 'yeah'})
         eq_(res.status_code, 200)
         assert self.get_user().read_dev_agreement
+
+    @mock.patch.object(settings, 'DEV_AGREEMENT_LAST_UPDATED',
+                       amo.tests.days_ago(-5).date())
+    def test_update(self):
+        past = self.days_ago(10)
+        self.user.update(read_dev_agreement=past)
+        res = self.client.post(self.url, {'read_dev_agreement': 'yeah'})
+        eq_(res.status_code, 200)
+        assert self.get_user().read_dev_agreement != past
+
+    @mock.patch.object(settings, 'DEV_AGREEMENT_LAST_UPDATED',
+                       amo.tests.days_ago(-5).date())
+    def test_past(self):
+        past = self.days_ago(10)
+        self.user.update(read_dev_agreement=past)
+        res = self.client.get(self.url)
+        doc = pq(res.content)
+        eq_(doc('#site-notice').length, 1)
+        eq_(doc('#dev-agreement').length, 1)
+        eq_(doc('#agreement-form').length, 1)
+
+    def test_not_past(self):
+        res = self.client.get(self.url)
+        doc = pq(res.content)
+        eq_(doc('#site-notice').length, 0)
+        eq_(doc('#dev-agreement').length, 1)
+        eq_(doc('#agreement-form').length, 0)

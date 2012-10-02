@@ -8,6 +8,7 @@ from django import http
 from django.conf import settings
 from django.forms.formsets import formset_factory
 from django.db.models import Q
+from django.db.transaction import commit_on_success
 from django.shortcuts import get_object_or_404, redirect
 from django.utils.datastructures import MultiValueDictKeyError
 
@@ -152,8 +153,7 @@ def context(**kw):
 def _review(request, addon):
     version = addon.latest_version
 
-    if (not settings.DEBUG and
-        addon.authors.filter(user=request.user).exists()):
+    if not settings.ALLOW_SELF_REVIEWS and addon.has_author(request.amo_user):
         messages.warning(request, _('Self-reviews are not allowed.'))
         return redirect(reverse('reviewers.home'))
 
@@ -204,7 +204,7 @@ def _review(request, addon):
         'product': json.dumps(
             product_as_dict(request, addon, False, 'developer'),
             cls=JSONEncoder),
-        'manifestUrl': addon.manifest_url,
+        'manifest_url': addon.manifest_url,
     }
 
     pager = paginate(request, versions, 10)
@@ -224,6 +224,7 @@ def _review(request, addon):
     return jingo.render(request, 'reviewers/review.html', ctx)
 
 
+@commit_on_success
 @permission_required('Apps', 'Review')
 @addon_view
 def app_review(request, addon):
@@ -702,6 +703,6 @@ def get_signed_packaged(request, addon, version_id):
     path = addon.sign_if_packaged(version_id, reviewer=True)
     if not path:
         raise http.Http404
-    log.info('Returning signed package addon: %s, version: %s' %
-             (addon.pk, version_id))
+    log.info('Returning signed package addon: %s, version: %s, path: %s' %
+             (addon.pk, version_id, path))
     return HttpResponseSendFile(request, path, content_type='application/zip')

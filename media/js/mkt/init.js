@@ -1,6 +1,7 @@
 var z = {
     body: $(document.body),
     page: $('#container'),
+    context: $('#page').data('context'),
     prefix: (function() {
         try {
             var s = window.getComputedStyle(document.body, '');
@@ -25,7 +26,8 @@ z.prefixUpper = z.prefix[0].toUpperCase() + z.prefix.substr(1);
     _.extend(z, {'nav': BrowserUtils()});
     if (!z.nav.browser.firefox ||
         z.nav.browser.mobile || z.nav.os.maemo ||
-        VersionCompare.compareVersions(z.nav.browserVersion, '16.0a1') < 0) {
+        VersionCompare.compareVersions(z.nav.browserVersion, '16.0') < 0 ||
+        (z.nav.os.android && VersionCompare.compareVersions(z.nav.browserVersion, '17.0') < 0)) {
         z.canInstallApps = false;
     }
 })();
@@ -64,6 +66,12 @@ $(document).ready(function() {
         pre_auth: data_user.pre_auth
     });
 
+    // Set cookie if user is on B2G.
+    // TODO: remove this once we allow purchases on desktop/android.
+    if (document.cookie && z.capabilities.gaia) {
+        document.cookie = 'gaia=true;path=/';
+    }
+
     stick.basic();
 });
 
@@ -71,16 +79,15 @@ $(document).ready(function() {
 z.page.on('fragmentloaded', function() {
     var badPlatform = '<div class="bad-platform">' + gettext('This app is unavailable for your platform.') + '</div>';
 
+    z.apps = {};
     if (z.capabilities.webApps) {
         // Get list of installed apps and mark as such.
         r = window.navigator.mozApps.getInstalled();
         r.onsuccess = function() {
-            z.apps = r.result;
             _.each(r.result, function(val) {
+                z.apps[val.manifestURL] = val;
                 $(window).trigger('app_install_success',
-                                  [{'manifestUrl': val.manifestURL}, false])
-                         .trigger('app_install_mark',
-                                  {'manifestUrl': val.manifestURL});
+                                  [val, {'manifest_url': val.manifestURL}, false]);
             });
         };
         if (!z.capabilities.gaia) {
@@ -89,8 +96,6 @@ z.page.on('fragmentloaded', function() {
             $('.listing .product[data-is_packaged="true"]').addClass('disabled')
                 .closest('.mkt-tile:not(.bad)').addClass('bad').append(badPlatform);
         }
-    } else {
-        z.apps = {};
     }
 
     if (!z.canInstallApps) {
@@ -111,20 +116,6 @@ z.page.on('fragmentloaded', function() {
 
     $(window).bind('overlay_dismissed', function() {
        $nav.removeClass('active');
-    }).bind('app_install_mark', function(e, product) {
-        var $li = $(format('.listing li[data-manifest="{0}"]',
-                           product.manifestUrl)),
-            $actions = $li.find('.actions'),
-            $purchased = $actions.find('.checkmark.purchased'),
-            installed = format('<span class="checkmark installed">{0}</span>',
-                               gettext('Installed'));
-        if ($purchased.length) {
-            $purchased.replaceWith(installed);
-        } else {
-            if (!$actions.find('.checkmark.installed').length) {
-                $actions.prepend(installed);
-            }
-        }
     });
 
     // Hijack external links if we're on mobile.
@@ -144,7 +135,6 @@ z.page.on('fragmentloaded', function() {
             // Yea...
             var sortoption = z.getVars(location.href);
 
-            // This will not scale if we have more than two.
             $('#filter-sort li a').removeClass('sel');
             switch(sortoption.sort) {
                 case 'None':

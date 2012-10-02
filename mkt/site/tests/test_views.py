@@ -69,6 +69,7 @@ class Test404(amo.tests.TestCase):
 
 class TestManifest(amo.tests.TestCase):
 
+    @mock.patch.object(settings, 'CARRIER_URLS', ['boop'])
     def test_manifest(self):
         response = self.client.get(reverse('manifest.webapp'))
         eq_(response.status_code, 200)
@@ -78,6 +79,14 @@ class TestManifest(amo.tests.TestCase):
         eq_(content['default_locale'], 'en-US')
         url = reverse('manifest.webapp')
         assert 'en-US' not in url and 'firefox' not in url
+        eq_(content['launch_path'], '/boop/')
+
+    @mock.patch.object(settings, 'CARRIER_URLS', [])
+    def test_manifest_no_carrier(self):
+        response = self.client.get(reverse('manifest.webapp'))
+        eq_(response.status_code, 200)
+        content = json.loads(response.content)
+        assert 'launch_path' not in content
 
     @mock.patch.object(settings, 'WEBAPP_MANIFEST_NAME', 'Mozilla Fruitstand')
     def test_manifest_name(self):
@@ -85,6 +94,19 @@ class TestManifest(amo.tests.TestCase):
         eq_(response.status_code, 200)
         content = json.loads(response.content)
         eq_(content['name'], 'Mozilla Fruitstand')
+
+    @mock.patch.object(settings, 'WEBAPP_MANIFEST_NAME', 'Mozilla Fruitstand')
+    def test_manifest_appcache(self):
+        response = self.client.get(reverse('manifest.webapp'))
+        eq_(response.status_code, 200)
+        content = json.loads(response.content)
+        eq_(content['appcache_path'], reverse('django_appcache.manifest'))
+
+        response = self.client.get(reverse('manifest.webapp'),
+                                   {'skip_appcache': '1'})
+        eq_(response.status_code, 200)
+        content = json.loads(response.content)
+        assert 'appcache_path' not in content
 
 
 class TestMozmarketJS(amo.tests.TestCase):

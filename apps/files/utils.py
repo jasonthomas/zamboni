@@ -274,7 +274,7 @@ class SafeUnzip(object):
             zip = zipfile.ZipFile(self.source, self.mode)
         except (BadZipfile, IOError):
             if fatal:
-                log.error('Error extracting', exc_info=True)
+                log.info('Error extracting', exc_info=True)
                 raise
             return False
 
@@ -457,7 +457,8 @@ def parse_addon(pkg, addon=None):
     or files.models.FileUpload.
     """
     name = getattr(pkg, 'name', pkg)
-    if getattr(pkg, 'is_webapp', False) or name.endswith(('.webapp', '.json')):
+    if (getattr(pkg, 'is_webapp', False) or
+        name.endswith(('.webapp', '.json', '.zip'))):
         parsed = WebAppParser().parse(pkg, addon)
     elif name.endswith('.xml'):
         parsed = parse_search(pkg, addon)

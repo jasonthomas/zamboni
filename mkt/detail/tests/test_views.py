@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import hashlib
 import json
+import os
 
 from django.conf import settings
 from django.core import mail
@@ -13,15 +14,16 @@ from pyquery import PyQuery as pq
 from tower import strip_whitespace
 import waffle
 
-from abuse.models import AbuseReport
 import amo
-from amo.helpers import external_url, urlparams
 import amo.tests
-from amo.urlresolvers import reverse
+from abuse.models import AbuseReport
 from addons.models import AddonCategory, AddonUpsell, AddonUser, Category
+from amo.helpers import external_url, urlparams
+from amo.urlresolvers import reverse
 from devhub.models import ActivityLog
 from market.models import PreApprovalUser
 from users.models import UserProfile
+from versions.models import Version
 
 import mkt
 from mkt.webapps.models import Webapp
@@ -41,8 +43,8 @@ class DetailBase(amo.tests.WebappTestCase):
     def get_user(self):
         return UserProfile.objects.get(email='regular@mozilla.com')
 
-    def get_pq(self):
-        r = self.client.get(self.url)
+    def get_pq(self, **kw):
+        r = self.client.get(self.url, kw)
         eq_(r.status_code, 200)
         return pq(r.content.decode('utf-8'))
 
@@ -104,7 +106,11 @@ class TestDetail(DetailBase):
 
     def dev_receipt_url(self):
         return urlparams(reverse('receipt.issue',
-                                 args=[self.app.app_slug]), src='')
+                                 args=[self.app.app_slug]), src='mkt-detail')
+
+    def test_install_button_src(self):
+        eq_(self.get_pq()('.mkt-tile').attr('data-src'), 'mkt-detail')
+        eq_(self.get_pq(src='xxx')('.mkt-tile').attr('data-src'), 'xxx')
 
     def test_paid_install_button_for_owner(self):
         self.make_premium(self.app)
@@ -126,6 +132,12 @@ class TestDetail(DetailBase):
             self.dev_receipt_url())
         eq_(doc('.product.install.premium').length, 1)
         eq_(doc('.manage').length, 1)
+
+    def test_tile_ratings_link(self):
+        # Assert that we have the link to the ratings page in the header tile.
+        self.create_switch(name='ratings')
+        eq_(self.get_pq()('.mkt-tile .rating_link').attr('href'),
+            self.app.get_ratings_url())
 
     def test_no_paid_public_install_button_for_reviewer(self):
         # Too bad. Reviewers can review the app from the Reviewer Tools.
@@ -221,6 +233,17 @@ class TestDetail(DetailBase):
         self.app.save()
         eq_(self.get_pq()('.developer-comments').text(),
             self.app.developer_comments)
+
+    def test_has_version(self):
+        self.app.summary = ''
+        self.app.description = ''
+        vers = Version.objects.create(addon=self.app, version='1.0')
+        self.app._current_version = vers
+        self.app.is_packaged = True
+        self.app.save()
+        version = self.get_pq()('.package-version')
+        eq_(version.text(),
+            'Latest version: %s' % str(self.app.current_version))
 
     def test_no_support(self):
         eq_(self.get_pq()('.developer-comments').length, 0)
@@ -370,7 +393,8 @@ class TestDetailPagePermissions(DetailBase):
     def test_public(self):
         doc = self.get_pq(status=amo.STATUS_PUBLIC)
         eq_(doc('#product-status').length, 0)
-        eq_(doc('.summary').length, 1, 'The rest of the page should visible')
+        eq_(doc('.summary').length, 1,
+            'The rest of the page should be visible')
 
     def test_deleted(self):
         self.app.update(status=amo.STATUS_DELETED)
@@ -407,6 +431,11 @@ class TestDetailPagePermissions(DetailBase):
     def test_disabled_by_mozilla(self):
         msg = self.get_msg(visible=False, status=amo.STATUS_DISABLED).text()
         assert 'disabled by Mozilla' in msg, (
+            'Expected a rejection message: %s' % msg)
+
+    def test_blocked_by_mozilla(self):
+        msg = self.get_msg(visible=False, status=amo.STATUS_BLOCKED).text()
+        assert 'blocked by Mozilla' in msg, (
             'Expected a rejection message: %s' % msg)
 
     def test_disabled_by_user(self):
@@ -459,6 +488,15 @@ class TestDetailPagePermissions(DetailBase):
         assert msg.find('.emaillink').length, (
             'Expected an email link so I can yell at Mozilla')
 
+    def _test_dev_blocked_by_mozilla(self):
+        # I'm a developer or an admin.
+        msg = self.get_msg(visible=True, status=amo.STATUS_BLOCKED)
+        txt = msg.text()
+        assert 'blocked by Mozilla' in txt, (
+            'Expected something about it being blocked: %s' % txt)
+        assert msg.find('.emaillink').length, (
+            'Expected an email link so I can yell at Mozilla')
+
     def _test_dev_disabled_by_user(self):
         # I'm a developer or an admin.
         msg = self.get_msg(visible=True, disabled_by_user=True)
@@ -488,6 +526,10 @@ class TestDetailPagePermissions(DetailBase):
         self.log_in_as('owner')
         self._test_dev_disabled_by_mozilla()
 
+    def test_owner_blocked_by_mozilla(self):
+        self.log_in_as('owner')
+        self._test_dev_blocked_by_mozilla()
+
     def test_owner_disabled_by_user(self):
         self.log_in_as('owner')
         self._test_dev_disabled_by_user()
@@ -511,6 +553,10 @@ class TestDetailPagePermissions(DetailBase):
     def test_admin_disabled_by_mozilla(self):
         self.log_in_as('admin')
         self._test_dev_disabled_by_mozilla()
+
+    def test_admin_blocked_by_mozilla(self):
+        self.log_in_as('admin')
+        self._test_dev_blocked_by_mozilla()
 
     def test_admin_disabled_by_user(self):
         self.log_in_as('admin')
@@ -587,8 +633,8 @@ class TestDetailPagePermissions(DetailBase):
                         % (region, user, status))
 
                     txt = disclaimer.text()
-                    assert ' unavailable to users in Brazil' in txt, (
-                        'Expected message about invisible in Brazil: %s' % txt)
+                    assert ' unavailable for users in Brazil' in txt, (
+                        u'Expected to say it is invisible in Brazil: %s' % txt)
 
                     eq_(doc('.button.product').length, 1)
                     eq_(doc('.content-ratings').length, 0)
@@ -878,3 +924,32 @@ class TestPackagedManifest(DetailBase):
         eq_(res.content, self._mocked_json())
         eq_(res['Content-Type'], 'application/x-web-app-manifest+json')
         eq_(res['ETag'], hashlib.md5(self._mocked_json()).hexdigest())
+
+    @mock.patch.object(settings, 'SITE_URL', 'http://hy.fr')
+    def test_blocked_app(self):
+        self.app.update(status=amo.STATUS_BLOCKED)
+        blocked_path = 'packaged-apps/blocklisted.zip'
+        res = self.client.get(self.url)
+        eq_(res['Content-type'], 'application/x-web-app-manifest+json')
+        assert 'etag' in res._headers
+        data = json.loads(res.content)
+        eq_(data['name'], self.app.name)
+        eq_(data['size'],
+            os.stat(os.path.join(settings.MEDIA_ROOT, blocked_path)).st_size)
+        eq_(data['package_path'],
+            os.path.join(settings.SITE_URL, 'media', blocked_path))
+        assert data['release_notes'].startswith(u'This app has been blocked')
+
+    @mock.patch.object(settings, 'MIDDLEWARE_CLASSES',
+        settings.MIDDLEWARE_CLASSES + type(settings.MIDDLEWARE_CLASSES)([
+            'amo.middleware.NoConsumerMiddleware',
+            'amo.middleware.LoginRequiredMiddleware'
+        ])
+    )
+    @mock.patch('mkt.webapps.models.Webapp.get_cached_manifest')
+    def test_logged_out(self, _mock):
+        _mock.return_value = self._mocked_json()
+        self.client.logout()
+        res = self.client.get(self.url)
+        eq_(res.status_code, 200)
+        eq_(res['Content-type'], 'application/x-web-app-manifest+json')

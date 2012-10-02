@@ -23,7 +23,6 @@ from amo.helpers import absolutify, numberfmt, urlparams
 from addons.tests.test_views import TestMobile
 from addons.models import (Addon, AddonCategory, Category, AppSupport, Feature,
                            FrozenAddon, Persona)
-from addons.utils import FeaturedManager
 from applications.models import Application
 from bandwagon.models import Collection, CollectionAddon, FeaturedCollection
 from browse import feeds
@@ -162,7 +161,7 @@ class TestListing(amo.tests.TestCase):
                 'base/addon_3615']
 
     def setUp(self):
-        self.reset_featured_addons()
+        cache.clear()
         self.url = reverse('browse.extensions')
 
     def test_default_sort(self):
@@ -390,7 +389,7 @@ class TestFeeds(amo.tests.TestCase):
                 'base/addon_3615']
 
     def setUp(self):
-        self.reset_featured_addons()
+        cache.clear()
         self.url = reverse('browse.extensions')
         self.rss_url = reverse('browse.extensions.rss')
         self.filter = AddonFilter
@@ -483,21 +482,15 @@ class TestFeaturedLocale(amo.tests.TestCase):
                 'base/addon_3615_featuredcollection']
 
     def setUp(self):
-        waffle.models.Switch.objects.create(name='no-redis', active=True)
         self.addon = Addon.objects.get(pk=3615)
         self.persona = Addon.objects.get(pk=15679)
         self.extension = Addon.objects.get(pk=2464)
         self.category = Category.objects.get(slug='bookmarks')
-
-        self.reset_featured_addons()
-
         self.url = reverse('browse.creatured', args=['bookmarks'])
         cache.clear()
 
     def reset(self):
         cache.clear()
-        FeaturedManager.redis().flushall()
-        self.reset_featured_addons()
 
     def list_featured(self, content):
         # Not sure we want to get into testing randomness
@@ -656,7 +649,7 @@ class TestFeaturedLocale(amo.tests.TestCase):
         # The order should be random within those boundaries.
         another = Addon.objects.get(id=1003)
         self.change_addon(another, 'en-US')
-        self.reset_featured_addons()
+        cache.clear()
 
         url = reverse('home')
         res = self.client.get(url)
@@ -822,7 +815,7 @@ class BaseSearchToolsTest(amo.tests.TestCase):
         s.addoncategory_set.add(AddonCategory(addon=limon, feature=True))
         s.addoncategory_set.add(AddonCategory(addon=readit, feature=True))
         s.save()
-        self.reset_featured_addons()
+        cache.clear()
 
 
 class TestSearchToolsPages(BaseSearchToolsTest):
@@ -1132,15 +1125,18 @@ class TestPersonas(amo.tests.TestCase):
     fixtures = ('base/apps', 'base/appversion', 'base/featured',
                 'addons/featured', 'addons/persona')
 
+    def setUp(self):
+        self.landing_url = reverse('browse.personas')
+
     def test_personas_grid(self):
         """Show grid page if there are fewer than 5 Personas."""
         base = (Addon.objects.public().filter(type=amo.ADDON_PERSONA)
                 .extra(select={'_app': amo.FIREFOX.id}))
         eq_(base.count(), 2)
-        r = self.client.get(reverse('browse.personas'))
+        r = self.client.get(self.landing_url)
         self.assertTemplateUsed(r, 'browse/personas/grid.html')
         eq_(r.status_code, 200)
-        assert 'is_homepage' in r.context
+        eq_(r.context['is_homepage'], True)
 
     def test_personas_landing(self):
         """Show landing page if there are greater than 4 Personas."""
@@ -1162,7 +1158,7 @@ class TestPersonas(amo.tests.TestCase):
         base = (Addon.objects.public().filter(type=amo.ADDON_PERSONA)
                 .extra(select={'_app': amo.FIREFOX.id}))
         eq_(base.count(), 5)
-        r = self.client.get(reverse('browse.personas'))
+        r = self.client.get(self.landing_url)
         self.assertTemplateUsed(r, 'browse/personas/category_landing.html')
 
     def test_personas_category_landing(self):
@@ -1189,8 +1185,7 @@ class TestPersonas(amo.tests.TestCase):
 
     def test_personas_category_landing_frozen(self):
         # Check to make sure add-on is there.
-        category_url = reverse('browse.personas')
-        r = self.client.get(category_url)
+        r = self.client.get(self.landing_url)
 
         personas = pq(r.content).find('.persona-preview')
         eq_(personas.length, 2)
@@ -1200,10 +1195,28 @@ class TestPersonas(amo.tests.TestCase):
         FrozenAddon.objects.create(addon_id=15663)
 
         # Make sure it's not there anymore
-        res = self.client.get(category_url)
+        res = self.client.get(self.landing_url)
 
         personas = pq(res.content).find('.persona-preview')
         eq_(personas.length, 1)
+
+    def test_submit_pitch_firefox(self):
+        r = self.client.get(self.landing_url)
+        eq_(pq(r.content)('.submit-theme').length, 0)
+
+        self.create_flag('submit-personas')
+        r = self.client.get(self.landing_url)
+        eq_(pq(r.content)('.submit-theme').length, 1)
+
+    def test_submit_pitch_thunderbird(self):
+        url = self.landing_url.replace('firefox', 'thunderbird')
+
+        r = self.client.get(url)
+        eq_(pq(r.content)('.submit-theme').length, 0)
+
+        self.create_flag('submit-personas')
+        r = self.client.get(url)
+        eq_(pq(r.content)('.submit-theme').length, 0)
 
 
 class TestMobileFeatured(TestMobile):

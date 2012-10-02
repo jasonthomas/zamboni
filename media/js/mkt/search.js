@@ -1,13 +1,4 @@
 (function() {
-    // Because bug 673873 kills me.
-    $('input[placeholder]').on('focus', function() {
-        var $this = $(this);
-        $this.data('placeholder', $this.attr('placeholder'))
-             .removeAttr('placeholder');
-    }).on('blur', function() {
-        var $this = $(this);
-        $this.attr('placeholder', $this.data('placeholder'));
-    });
 
     // Add 'sel' class to active filter and set hidden input value.
     z.page.on('click', '#filters .toggles a', function() {
@@ -21,6 +12,11 @@
         return false;
     });
 
+    // Clear search field on 'cancel' search suggestions.
+    $('#site-header').on('click', '.header-button.cancel', _pd(function() {
+        $('#site-search-suggestions').trigger('dismiss');
+        $('#search-q').val('');
+    }));
 
     function selectMe($elm) {
         var $myUL = $elm.closest('ul'),
@@ -61,21 +57,30 @@
     }));
 
     // If we're on desktop, show graphical results - unless specified by user.
-    var expandListingsStored = localStorage.getItem('expand-listings');
-    var expandListings = expandListingsStored ? expandListingsStored === 'true' : z.capabilities.desktop;
+    var expandListingsStored, expandListings;
 
     var $expandToggle = $('#site-header .expand');
 
     // Toggle app listing graphical/compact view.
     $expandToggle.click(_pd(function(e) {
+        expandListingsStored = localStorage.getItem('expand-listings');
+        expandListings = expandListingsStored ? expandListingsStored === 'true' : z.capabilities.desktop;
+
         expandListings = !expandListings;
         setTrays(expandListings);
     }));
 
     z.page.on('fragmentloaded', function() {
         if (z.body.data('page-type') === 'search') {
+            expandListingsStored = localStorage.getItem('expand-listings');
+            expandListings = expandListingsStored ? expandListingsStored === 'true' : z.capabilities.desktop;
+
             setTrays(expandListings);
         }
+
+        // Set "Category Name" or "Apps" as search placeholder.
+        var $q = $('#search-q');
+        $q.attr('placeholder', z.context.category || $q.data('placeholder-default'));
     });
 
 

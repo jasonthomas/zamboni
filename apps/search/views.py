@@ -385,13 +385,14 @@ class WebappSuggestionsAjax(SearchSuggestionsAjax):
 
     def __init__(self, request, excluded_ids=(), category=None):
         self.category = category
+        self.gaia = request.GAIA
         SearchSuggestionsAjax.__init__(self, request, excluded_ids)
 
     def queryset(self):
         res = SearchSuggestionsAjax.queryset(self)
         if self.category:
             res = res.filter(category__in=[self.category])
-        if waffle.switch_is_active('disabled-payments'):
+        if waffle.switch_is_active('disabled-payments') or not self.gaia:
             res = res.filter(premium_type__in=amo.ADDON_FREES, price=0)
 
         region = getattr(self.request, 'REGION', mkt.regions.WORLDWIDE)
@@ -400,10 +401,10 @@ class WebappSuggestionsAjax(SearchSuggestionsAjax):
             if excluded:
                 if isinstance(res, S):
                     # ES? Do fanciness.
-                    return res.filter(~F(id__in=excluded))
+                    res = res.filter(~F(id__in=excluded))
                 else:
                     # Django ORM? Do an `exclude`.
-                    return res.exclude(id__in=excluded)
+                    res = res.exclude(id__in=excluded)
 
         if getattr(self.request, 'MOBILE', False):
             res = res.filter(device=amo.DEVICE_MOBILE.id)

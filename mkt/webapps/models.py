@@ -25,7 +25,7 @@ import amo.models
 from access.acl import action_allowed, check_reviewer
 from addons import query
 from addons.models import (Addon, AddonDeviceType, Category,
-                           update_name_table, update_search_index)
+                           update_search_index)
 from addons.signals import version_changed
 from amo.decorators import skip_cache
 from amo.helpers import absolutify
@@ -235,6 +235,20 @@ class Webapp(Addon):
             return ImageAsset.objects.get(addon=self, slug=slug).image_url
         except ImageAsset.DoesNotExist:
             return settings.MEDIA_URL + 'img/hub/default-64.png'
+
+    def get_image_asset_hue(self, slug):
+        """
+        Returns the URL for an app's image asset that uses the slug specified
+        by `slug`.
+        """
+        if not any(slug == x['slug'] for x in APP_IMAGE_SIZES):
+            raise Exception(
+                "Requesting image asset for size that doesn't exist.")
+
+        try:
+            return ImageAsset.objects.get(addon=self, slug=slug).hue
+        except ImageAsset.DoesNotExist:
+            return 0
 
     @staticmethod
     def domain_from_url(url):
@@ -477,7 +491,7 @@ class Webapp(Addon):
         return datetime.date.today()
 
     @classmethod
-    def featured(cls, cat=None, region=None, limit=6):
+    def featured(cls, cat=None, region=None, limit=6, gaia=False):
         FeaturedApp = models.get_model('zadmin', 'FeaturedApp')
         qs = (FeaturedApp.objects
               .filter(app__status=amo.STATUS_PUBLIC,
@@ -488,7 +502,7 @@ class Webapp(Addon):
         qs = (qs.filter(end_date__gte=cls.now())
             | qs.filter(end_date__isnull=True))
 
-        if waffle.switch_is_active('disabled-payments'):
+        if waffle.switch_is_active('disabled-payments') or not gaia:
             qs = qs.filter(app__premium_type__in=amo.ADDON_FREES)
 
         if isinstance(cat, list):
@@ -530,7 +544,7 @@ class Webapp(Addon):
                     .values_list('addon', flat=True))
 
     @classmethod
-    def from_search(cls, cat=None, region=None):
+    def from_search(cls, cat=None, region=None, gaia=False):
         filters = dict(type=amo.ADDON_WEBAPP,
                        status=amo.STATUS_PUBLIC,
                        is_disabled=False)
@@ -544,20 +558,20 @@ class Webapp(Addon):
             if excluded:
                 srch = srch.filter(~F(id__in=excluded))
 
-        if waffle.switch_is_active('disabled-payments'):
+        if waffle.switch_is_active('disabled-payments') or not gaia:
             srch = srch.filter(premium_type__in=amo.ADDON_FREES, price=0)
 
         return srch
 
     @classmethod
-    def popular(cls, cat=None, region=None):
+    def popular(cls, cat=None, region=None, gaia=False):
         """Elastically grab the most popular apps."""
-        return cls.from_search(cat, region).order_by('-popularity')
+        return cls.from_search(cat, region, gaia=gaia).order_by('-popularity')
 
     @classmethod
-    def latest(cls, cat=None, region=None):
+    def latest(cls, cat=None, region=None, gaia=False):
         """Elastically grab the most recent apps."""
-        return cls.from_search(cat, region).order_by('-created')
+        return cls.from_search(cat, region, gaia=gaia).order_by('-created')
 
     @classmethod
     def category(cls, slug):
@@ -628,8 +642,6 @@ Webapp._meta.translated_fields = Addon._meta.translated_fields
 
 models.signals.post_save.connect(update_search_index, sender=Webapp,
                                  dispatch_uid='mkt.webapps.index')
-models.signals.post_save.connect(update_name_table, sender=Webapp,
-                                 dispatch_uid='mkt.webapps.update.name.table')
 
 
 @receiver(version_changed, dispatch_uid='update_cached_manifests')
@@ -643,6 +655,7 @@ class ImageAsset(amo.models.ModelBase):
     addon = models.ForeignKey(Addon, related_name='image_assets')
     filetype = models.CharField(max_length=25, default='image/png')
     slug = models.CharField(max_length=25)
+    hue = models.PositiveIntegerField(null=False, default=0)
 
     class Meta:
         db_table = 'image_assets'

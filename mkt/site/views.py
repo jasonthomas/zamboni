@@ -63,6 +63,7 @@ def csrf_failure(request, reason=''):
 
 def manifest(request):
     ctx = RequestContext(request)
+    use_appcache = 'skip_appcache' not in request.GET
     data = {
         'name': getattr(settings, 'WEBAPP_MANIFEST_NAME',
                         'Firefox Marketplace'),
@@ -73,15 +74,18 @@ def manifest(request):
         },
         'icons': {
             # Using the default addon image until we get a marketplace logo.
-            '32': media(ctx, 'img/mkt/logos/32.png'),
-            '64': media(ctx, 'img/mkt/logos/64.png'),
             '128': media(ctx, 'img/mkt/logos/128.png'),
+            '64': media(ctx, 'img/mkt/logos/64.png'),
+            '32': media(ctx, 'img/mkt/logos/32.png'),
         },
         # TODO: when we have specific locales, add them in here.
         'locales': {},
-        'default_locale': 'en-US',
-        'appcache_path': reverse('django_appcache.manifest')
+        'default_locale': 'en-US'
     }
+    if use_appcache:
+        data['appcache_path'] = reverse('django_appcache.manifest')
+    if settings.CARRIER_URLS:
+        data['launch_path'] = '/%s/' % settings.CARRIER_URLS[0]
     return HttpResponse(json.dumps(data),
                         mimetype='application/x-web-app-manifest+json')
 

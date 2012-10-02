@@ -18,7 +18,7 @@ from amo.tests.test_helpers import get_image_path
 from amo.urlresolvers import reverse
 from addons.models import (Addon, AddonCategory, AddonDeviceType, AddonUser,
                            Category)
-from addons.utils import ReverseNameLookup
+from addons.utils import reverse_name_lookup
 from apps.users.models import UserNotification
 from apps.users.notifications import app_surveys
 from constants.applications import DEVICE_TYPES
@@ -292,11 +292,14 @@ class TestCreateWebApp(BaseWebAppTest):
     def test_app_from_uploaded_manifest(self):
         addon = self.post_addon()
         eq_(addon.type, amo.ADDON_WEBAPP)
+        eq_(addon.is_packaged, False)
         eq_(addon.guid, None)
         eq_(unicode(addon.name), u'MozillaBall ょ')
         eq_(addon.slug, 'app-%s' % addon.id)
         eq_(addon.app_slug, u'mozillaball-ょ')
         eq_(addon.summary, u'Exciting Open Web development action!')
+        eq_(addon.manifest_url, u'http://allizom.org/mozball.webapp')
+        eq_(addon.app_domain, u'http://allizom.org')
         eq_(Translation.objects.get(id=addon.summary.id, locale='it'),
             u'Azione aperta emozionante di sviluppo di fotoricettore!')
 
@@ -419,6 +422,8 @@ class TestCreatePackagedApp(BasePackagedAppTest):
         eq_(addon.slug, 'app-%s' % addon.id)
         eq_(addon.app_slug, u'packaged-mozillaball-ょ')
         eq_(addon.summary, u'Exciting Open Web development action!')
+        eq_(addon.manifest_url, None)
+        eq_(addon.app_domain, None)
         eq_(Translation.objects.get(id=addon.summary.id, locale='it'),
             u'Azione aperta emozionante di sviluppo di fotoricettore!')
 
@@ -618,7 +623,7 @@ class TestDetails(TestSubmit):
         self._step()
         # Generate another webapp to test name uniqueness.
         app = amo.tests.addon_factory(type=amo.ADDON_WEBAPP, name='Cool App')
-        eq_(ReverseNameLookup(webapp=True).get(app.name), app.id)
+        eq_(reverse_name_lookup(app.name, webapp=True), app.id)
 
     def test_name_unique(self):
         self._setup_other_webapp()

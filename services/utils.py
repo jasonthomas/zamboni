@@ -1,7 +1,20 @@
 from datetime import datetime, timedelta
 import dictconfig
 import logging
-import settings_local as settings
+import os
+
+# get the right settings module
+import imp
+settingmodule = os.environ.get('DJANGO_SETTINGS_MODULE', 'settings_local')
+if settingmodule.startswith(('zamboni',  # typical git clone destination
+                       'workspace',  # Jenkins
+                       'project',  # vagrant VM
+                       'freddo')):
+    settingmodule = settingmodule.split('.', 1)[1]
+
+res = imp.find_module(settingmodule)
+settings = imp.load_module(settingmodule, *res)
+
 import posixpath
 import re
 import sys
@@ -14,7 +27,6 @@ from django.core.management import setup_environ
 import commonware.log
 
 # Pyflakes will complain about these, but they are required for setup.
-import settings_local as settings
 setup_environ(settings)
 from lib.log_settings_base import formatters, handlers, loggers
 
@@ -107,14 +119,16 @@ def log_configure():
 
 
 def log_exception(data):
-    (typ, value, discard) = sys.exc_info()
-    error_log = logging.getLogger('z.services')
-    error_log.error(u'Type: %s, %s. Data: %s' % (typ, value, data))
+    # Note: although this logs exceptions, it logs at the info level so that
+    # on prod, we log at the error level and result in no logs on prod.
+    typ, value, discard = sys.exc_info()
+    error_log = logging.getLogger('z.receipt')
+    error_log.info(u'Type: %s, %s. Data: %s' % (typ, value, data))
 
 
-def log_info(data, msg):
-    error_log = logging.getLogger('z.services')
-    error_log.error(u'Msg: %s, Data: %s' % (msg, data))
+def log_info(msg):
+    error_log = logging.getLogger('z.receipt')
+    error_log.info(msg)
 
 
 def log_cef(request, app, msg, longer):

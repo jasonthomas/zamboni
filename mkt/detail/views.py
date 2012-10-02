@@ -1,9 +1,13 @@
 import hashlib
+import json
+import os
 
 from django import http
+from django.conf import settings
 from django.shortcuts import redirect
 from django.views.decorators.http import etag
 
+import commonware.log
 import jingo
 from session_csrf import anonymous_csrf_exempt
 from tower import ugettext as _
@@ -13,14 +17,17 @@ from abuse.models import send_abuse_report
 from access import acl
 from addons.decorators import addon_view_factory
 from amo.decorators import login_required, permission_required
+from amo.helpers import absolutify
 from amo.forms import AbuseForm
-from amo.utils import paginate
+from amo.utils import JSONEncoder, paginate
 from devhub.models import ActivityLog
 from reviews.models import GroupedRating, Review
 from reviews.views import get_flags
 
 from mkt.site import messages
 from mkt.webapps.models import Webapp
+
+log = commonware.log.getLogger('z.detail')
 
 addon_view = addon_view_factory(qs=Webapp.objects.valid)
 addon_all_view = addon_view_factory(qs=Webapp.objects.all)
@@ -56,12 +63,31 @@ def manifest(request, addon):
     is_dev = addon.has_author(request.amo_user)
     is_public = addon.status == amo.STATUS_PUBLIC
 
-    if (not addon.is_packaged or addon.disabled_by_user or (
-            not is_public and not (is_reviewer or is_dev))):
+    # If webapp is blocklisted, show the blocklisted manifest.
+    if addon.status == amo.STATUS_BLOCKED:
+        # TODO: Consider caching the os.stat call to avoid FS hits.
+        package_name = 'packaged-apps/blocklisted.zip'
+        data = {
+            'name': addon.name,
+            'size': os.stat(os.path.join(settings.MEDIA_ROOT,
+                                         package_name)).st_size,
+            'release_notes':
+                _(u'This app has been blocked for your protection.'),
+            'package_path': absolutify(os.path.join(settings.MEDIA_URL,
+                                                    package_name)),
+        }
+        manifest_content = json.dumps(data, cls=JSONEncoder)
+        manifest_etag = hashlib.md5(manifest_content).hexdigest()
+
+        log.info('Serving up blocklisted app for addon: %s' % addon)
+
+    elif (not addon.is_packaged or addon.disabled_by_user or (
+              not is_public and not (is_reviewer or is_dev))):
         raise http.Http404
 
-    manifest_content = addon.get_cached_manifest()
-    manifest_etag = hashlib.md5(manifest_content).hexdigest()
+    else:
+        manifest_content = addon.get_cached_manifest()
+        manifest_etag = hashlib.md5(manifest_content).hexdigest()
 
     @etag(lambda r, a: manifest_etag)
     def _inner_view(request, addon):

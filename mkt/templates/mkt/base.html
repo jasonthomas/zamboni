@@ -4,10 +4,7 @@
 {% set FORCE_MOBILE = 'force-mobile ' if waffle.switch('force-mobile-layout') %}
 {% set logged = request.user.is_authenticated() %}
 <!DOCTYPE html>
-<html lang="{{ LANG }}" dir="{{ DIR }}"
-  {%- if settings.USE_APPCACHE and OFFLINE_MANIFEST %}
-    {{ appcache_manifest_link()|safe }}
-  {%- endif -%}>
+<html lang="{{ LANG }}" dir="{{ DIR }}">
   <head>
     <meta charset="utf-8">
     {% if not settings.ENGAGE_ROBOTS %}
@@ -16,7 +13,7 @@
     <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, maximum-scale=1">
     <meta name="apple-mobile-web-app-capable" content="yes">
     {% block extrameta %}{% endblock %}
-    <title>{% block title %}{{ _('Firefox Marketplace') }}{% endblock %}</title>
+    <title>{{ pagetitle or _('Firefox Marketplace') }}</title>
 
     <link rel="shortcut icon" type="image/x-icon"
           href="{{ MEDIA_URL }}img/mkt/logos/128.png" sizes="128x128">
@@ -38,7 +35,7 @@
       <meta name="csrf" content="{{ csrf_token }}">
     {% endif %}
   </head>
-  <body class="html-{{ DIR }} {{ CARRIER }} {{ FORCE_MOBILE }}"
+  <body class="html-{{ DIR }} {{ CARRIER }} {{ FORCE_MOBILE }} {{ bodyclass }}"
         {% if waffle.switch('anonymous-free-installs') %}data-allow-anon-installs="true"{% endif %}
         data-user="{{ user_data(amo_user)|json }}"
         data-readonly="{{ settings.READ_ONLY|json }}"
@@ -46,9 +43,9 @@
         data-login-url="{{ url('users.browserid_login') }}"
         data-collect-timings="{{ url('mkt.timing.record') }}:{{ collect_timings_percent }}"
         data-simulate-nav-pay="{{ settings.SIMULATE_NAV_PAY|json }}"
+        data-page-type="{{ pagetype or 'leaf' }}"
         {% if not logged %}data-recaptcha="{{ settings.RECAPTCHA_PUBLIC_KEY }}"{% endif %}
         {% block bodyattrs %}{% endblock %}>
-
 
     {% block siteheader %}
       {% include 'mkt/header.html' %}
@@ -56,8 +53,11 @@
 
     <div id="container">
       <div id="page" role="main"
-           data-type="{% block pagetype %}leaf{% endblock %}"
-           data-bodyclass="{% block bodyclass %}{% endblock %}">
+           data-context="{{
+             {'type': pagetype or 'leaf',
+              'title': pagetitle or _('Firefox Marketplace'),
+              'bodyclass': bodyclass or '',
+              'category': category.name ~ '' if category else ''}|json }}">
         {# `outer_content` is for stuff you want above `content` on every page. #}
         {% block outer_content %}
           {% include 'site/messages/display.html' %}
@@ -84,7 +84,8 @@
           <p>
             {% if logged %}
               {% for link in tools_links %}
-                <a href="{{ link.href }}" class="sync" rel="external">{{ link.text }}</a>
+                <a href="{{ link.href }}" class="sync" rel="external"
+                   {{ ' target="%s"' % link.target if (request.MOBILE and link.target) }}>{{ link.text }}</a>
               {% endfor %}
               {% if request.can_view_consumer %}
                 {# TODO: Coming soon with payments. #}
@@ -191,14 +192,14 @@
     </div>
 
     {% block offline_pixel %}
-      <iframe id="offline-pixel" src="{{ settings.SITE_URL + url('offline.home') }}"></iframe>
+      <iframe id="offline-pixel" src="{{ url('offline.stub') }}"></iframe>
     {% endblock %}
 
     {% block dbgoverlay %}{% endblock %}
 
     {# js #}
     {% block site_js %}
-      <script src="{{ static(url('jsi18n')) }}"></script>
+      <script src="{{ static(url('jsi18n'))|urlparams(lang=LANG) }}"></script>
       {# When bug 755694 is solved, expose the shim again. #}
       {# <script src="https://myapps.mozillalabs.com/jsapi/include.js"></script> #}
       {% if not logged %}
