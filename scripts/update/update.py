@@ -104,6 +104,9 @@ def install_cron(ctx):
 @hostgroups(settings.WEB_HOSTGROUP, remote_kwargs={'ssh_key': settings.SSH_KEY})
 def deploy_app(ctx):
     ctx.remote(settings.REMOTE_UPDATE_SCRIPT)
+
+@hostgroups(settings.WEB_HOSTGROUP, remote_kwargs={'ssh_key': settings.SSH_KEY})
+def restart_services(ctx):
     if getattr(settings, 'GUNICORN', False):
         for gservice in settings.GUNICORN:
             ctx.remote("/sbin/service %s graceful" % gservice)
@@ -130,6 +133,7 @@ def deploy(ctx):
     install_cron()
     checkin_changes()
     deploy_app()
+    restart_services()
     update_celery()
     with ctx.lcd(settings.SRC_DIR):
         ctx.local('%s manage.py cron cleanup_validation_results' % settings.PYTHON)
