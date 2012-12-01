@@ -105,6 +105,7 @@ def install_cron(ctx):
 def deploy_app(ctx):
     ctx.remote(settings.REMOTE_UPDATE_SCRIPT)
 
+
 @hostgroups(settings.WEB_HOSTGROUP, remote_kwargs={'ssh_key': settings.SSH_KEY})
 def restart_services(ctx):
     if getattr(settings, 'GUNICORN', False):
