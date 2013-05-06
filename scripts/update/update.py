@@ -109,6 +109,15 @@ def update_code(ctx, ref='origin/master'):
 
 
 @task
+def update_fireplace(ctx, ref='origin/master'):
+    FIREPLACE_SRC_DIR = '%s/fireplace' % settings.SRC_DIR
+    with ctx.lcd(FIREPLACE_SRC_DIR):
+        ctx.local("git fetch && git fetch -t")
+        ctx.local("git reset --hard %s" % ref)
+        ctx.local('make zamboni')
+
+
+@task
 def update_info(ctx, ref='origin/master'):
     with ctx.lcd(settings.SRC_DIR):
         ctx.local("git status")
@@ -206,6 +215,7 @@ def pre_update(ctx, ref=settings.UPDATE_REF):
 def update(ctx):
     create_virtualenv()
     update_locales()
+    update_fireplace()
     update_products()
     compress_assets()
     compress_assets(arg='--settings=settings_local_mkt')
